@@ -9,6 +9,12 @@
       <div class="quick-actions">
         <button class="btn btn--primary btn--large" @click="router.push('/fuel')">加油记录</button>
         <button class="btn btn--secondary btn--large" @click="router.push('/trip')">油耗记录</button>
+        <button class="btn btn--secondary btn--large" :disabled="isSubmittingAll || !pendingRecordCount" @click="submitAllPendingRecords">
+          {{ isSubmittingAll ? '提交中...' : `一键提交未提交（${pendingRecordCount}）` }}
+        </button>
+        <button class="btn btn--ghost btn--large" :disabled="isSyncingFromGithub" @click="syncAllFromGithub">
+          {{ isSyncingFromGithub ? '拉取中...' : '一键拉取' }}
+        </button>
         <button class="btn btn--ghost btn--large" @click="router.push('/guide')">应用说明</button>
       </div>
     </section>
@@ -155,7 +161,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, watch } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useStatistics } from '../composables/useStatistics';
 import { useAppStore } from '../stores/appStore';
@@ -166,6 +172,8 @@ import { formatCurrency, formatNumber, parsePositiveNumber, roundTo } from '../u
 
 const router = useRouter();
 const store = useAppStore();
+const isSubmittingAll = ref(false);
+const isSyncingFromGithub = ref(false);
 
 const recordsRef = computed(() => store.state.records);
 const {
@@ -179,6 +187,7 @@ const {
 } = useStatistics(recordsRef);
 
 const recentThreeRecords = computed(() => sortedRecords.value.slice(0, 3));
+const pendingRecordCount = computed(() => store.state.records.filter((record) => !record.submittedToGithub).length);
 
 const remainingFuelText = computed(() => {
   if (!store.state.fuelBalance.baselineEstablished || store.state.fuelBalance.remainingFuelLiters === null) {
@@ -240,5 +249,60 @@ function handleResetBaseline(): void {
 
 function jumpToRecord(record: AppRecord): void {
   router.push(record.type === 'fuel' ? '/fuel' : '/trip');
+}
+
+async function submitAllPendingRecords(): Promise<void> {
+  if (isSubmittingAll.value) {
+    return;
+  }
+
+  if (!pendingRecordCount.value) {
+    store.showToast('没有可提交的记录。', 'info');
+    return;
+  }
+
+  isSubmittingAll.value = true;
+
+  try {
+    const result = await store.submitPendingRecords();
+
+    if (result.successCount > 0 && result.failedCount === 0) {
+      store.showToast(`全部未提交记录已提交，共 ${result.successCount} 条。`, 'success');
+      return;
+    }
+
+    if (result.successCount > 0) {
+      const firstFailure = result.failures[0]?.message ?? '部分记录提交失败。';
+      store.showToast(`提交完成：成功 ${result.successCount}，失败 ${result.failedCount}。${firstFailure}`, 'info');
+      return;
+    }
+
+    store.showToast(result.failures[0]?.message ?? '提交失败。', 'error');
+  } finally {
+    isSubmittingAll.value = false;
+  }
+}
+
+async function syncAllFromGithub(): Promise<void> {
+  if (isSyncingFromGithub.value) {
+    return;
+  }
+
+  isSyncingFromGithub.value = true;
+
+  try {
+    const result = await store.syncRecordsFromGithub();
+
+    if (result.fetched === 0) {
+      store.showToast('GitHub 目录暂无可导入的历史记录。', 'info');
+      return;
+    }
+
+    store.showToast(`拉取完成：读取 ${result.fetched} 条，新增 ${result.added}，重复 ${result.skipped}，无效 ${result.invalid}。`, 'success');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '从 GitHub 拉取失败。', 'error');
+  } finally {
+    isSyncingFromGithub.value = false;
+  }
 }
 </script>

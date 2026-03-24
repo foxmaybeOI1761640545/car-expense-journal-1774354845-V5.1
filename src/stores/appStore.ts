@@ -1,7 +1,7 @@
 ﻿import { reactive } from 'vue';
 import type { AppConfig } from '../types/config';
 import { DEFAULT_APP_CONFIG } from '../types/config';
-import type { AppRecord, FuelRecord, TripRecord } from '../types/records';
+import type { AppRecord, FuelRecord, RecordType, TripRecord } from '../types/records';
 import type { AppStoreState, FuelBalanceState } from '../types/store';
 import { createEmptyFuelBalance, recalculateFuelBalance } from '../services/balanceService';
 import { applyBranding } from '../services/brandingService';
@@ -41,6 +41,10 @@ interface BatchSubmitResult {
   failedCount: number;
   successRecordIds: string[];
   failures: Array<{ recordId: string; message: string }>;
+}
+
+interface SyncRecordsResult extends ImportRecordsResult {
+  fetched: number;
 }
 
 let toastTimer: number | null = null;
@@ -465,9 +469,34 @@ async function submitRecords(recordIds: string[]): Promise<BatchSubmitResult> {
   };
 }
 
-async function syncRecordsFromGithub(): Promise<ImportRecordsResult & { fetched: number }> {
+function filterRecordsByType(records: unknown[], recordType?: RecordType): unknown[] {
+  if (!recordType) {
+    return records;
+  }
+
+  return records.filter((item) => {
+    if (!item || typeof item !== 'object') {
+      return false;
+    }
+
+    return (item as { type?: unknown }).type === recordType;
+  });
+}
+
+function getPendingRecordIds(recordType?: RecordType): string[] {
+  return state.records
+    .filter((record) => !record.submittedToGithub && (!recordType || record.type === recordType))
+    .map((record) => record.id);
+}
+
+async function submitPendingRecords(recordType?: RecordType): Promise<BatchSubmitResult> {
+  return submitRecords(getPendingRecordIds(recordType));
+}
+
+async function syncRecordsFromGithub(recordType?: RecordType): Promise<SyncRecordsResult> {
   const githubRecords = await fetchRecordsFromGithub(state.config);
-  const normalizedFromGithub = githubRecords.map((item) => {
+  const filteredFromGithub = filterRecordsByType(githubRecords, recordType);
+  const normalizedFromGithub = filteredFromGithub.map((item) => {
     if (!item || typeof item !== 'object') {
       return item;
     }
@@ -480,7 +509,7 @@ async function syncRecordsFromGithub(): Promise<ImportRecordsResult & { fetched:
   const importResult = importRecords(normalizedFromGithub);
 
   return {
-    fetched: githubRecords.length,
+    fetched: filteredFromGithub.length,
     ...importResult,
   };
 }
@@ -497,6 +526,7 @@ export function useAppStore() {
     importRecords,
     submitRecord,
     submitRecords,
+    submitPendingRecords,
     syncRecordsFromGithub,
     isRecordSubmitting,
     showToast,

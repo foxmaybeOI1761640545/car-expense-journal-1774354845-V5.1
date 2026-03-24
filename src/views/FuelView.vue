@@ -79,6 +79,12 @@
           <div class="inline-actions">
             <button class="btn btn--ghost" @click="exportFuelJson">导出 JSON</button>
             <button class="btn btn--ghost" @click="exportFuelCsv">导出 CSV</button>
+            <button class="btn btn--secondary" :disabled="isBatchSubmitting || !pendingFuelRecordIds.length" @click="submitAllPendingFuelRecords">
+              {{ isBatchSubmitting ? '提交中...' : `一键提交未提交（${pendingFuelRecordIds.length}）` }}
+            </button>
+            <button class="btn btn--ghost" :disabled="isSyncingFromGithub" @click="syncFuelFromGithub">
+              {{ isSyncingFromGithub ? '拉取中...' : '从 GitHub 拉取加油历史' }}
+            </button>
           </div>
         </div>
 
@@ -123,12 +129,12 @@
             <div class="inline-actions">
               <button
                 class="btn btn--secondary"
-                :disabled="isSubmitting(record.id)"
+                :disabled="isBatchSubmitting || isSubmitting(record.id)"
                 @click="submitRecord(record.id)"
               >
                 {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
               </button>
-              <button class="btn btn--danger" @click="removeRecord(record.id)">删除</button>
+              <button class="btn btn--danger" :disabled="isBatchSubmitting" @click="removeRecord(record.id)">删除</button>
             </div>
           </li>
         </ul>
@@ -166,6 +172,8 @@ const keyword = ref('');
 const provinceFilter = ref('');
 const fuelTypeFilter = ref('');
 const submitFilter = ref<'all' | 'submitted' | 'pending'>('all');
+const isBatchSubmitting = ref(false);
+const isSyncingFromGithub = ref(false);
 
 const fuelRecords = computed(() =>
   store.state.records
@@ -200,6 +208,10 @@ const filteredRecords = computed(() => {
     return Boolean(matchesKeyword && matchesProvince && matchesFuelType && matchesSubmitStatus);
   });
 });
+
+const pendingFuelRecordIds = computed(() =>
+  fuelRecords.value.filter((record) => !record.submittedToGithub).map((record) => record.id),
+);
 
 const consistencyDiff = computed(() => {
   const price = parsePositiveNumber(form.pricePerLiter);
@@ -292,6 +304,61 @@ async function submitRecord(recordId: string): Promise<void> {
     store.showToast(`提交成功：${result.path}`, 'success');
   } catch (error) {
     store.showToast(error instanceof Error ? error.message : '提交失败。', 'error');
+  }
+}
+
+async function submitAllPendingFuelRecords(): Promise<void> {
+  if (isBatchSubmitting.value) {
+    return;
+  }
+
+  if (!pendingFuelRecordIds.value.length) {
+    store.showToast('没有可提交的加油记录。', 'info');
+    return;
+  }
+
+  isBatchSubmitting.value = true;
+
+  try {
+    const result = await store.submitPendingRecords('fuel');
+
+    if (result.successCount > 0 && result.failedCount === 0) {
+      store.showToast(`加油记录提交成功，共 ${result.successCount} 条。`, 'success');
+      return;
+    }
+
+    if (result.successCount > 0) {
+      const firstFailure = result.failures[0]?.message ?? '部分记录提交失败。';
+      store.showToast(`加油记录提交完成：成功 ${result.successCount}，失败 ${result.failedCount}。${firstFailure}`, 'info');
+      return;
+    }
+
+    store.showToast(result.failures[0]?.message ?? '提交失败。', 'error');
+  } finally {
+    isBatchSubmitting.value = false;
+  }
+}
+
+async function syncFuelFromGithub(): Promise<void> {
+  if (isSyncingFromGithub.value) {
+    return;
+  }
+
+  isSyncingFromGithub.value = true;
+
+  try {
+    const result = await store.syncRecordsFromGithub('fuel');
+
+    if (result.fetched === 0) {
+      store.showToast('GitHub 目录暂无可导入的加油记录。', 'info');
+      return;
+    }
+
+    store.showToast(`拉取完成：读取 ${result.fetched} 条，新增 ${result.added}，重复 ${result.skipped}，无效 ${result.invalid}。`, 'success');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '从 GitHub 拉取失败。', 'error');
+  } finally {
+    isSyncingFromGithub.value = false;
   }
 }
 

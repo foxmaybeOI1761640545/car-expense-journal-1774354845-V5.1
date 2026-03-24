@@ -73,7 +73,7 @@
             <button class="btn btn--ghost" @click="exportTripCsv">导出 CSV</button>
             <button class="btn btn--ghost" @click="openImportDialog">导入 JSON</button>
             <button class="btn btn--ghost" :disabled="isSyncingFromGithub" @click="syncFromGithub">
-              {{ isSyncingFromGithub ? '拉取中...' : '从 GitHub 拉取历史' }}
+              {{ isSyncingFromGithub ? '拉取中...' : '从 GitHub 拉取油耗历史' }}
             </button>
           </div>
           <input
@@ -491,10 +491,10 @@ async function syncFromGithub(): Promise<void> {
   isSyncingFromGithub.value = true;
 
   try {
-    const result = await store.syncRecordsFromGithub();
+    const result = await store.syncRecordsFromGithub('trip');
 
     if (result.fetched === 0) {
-      store.showToast('GitHub 目录暂无可导入的历史记录。', 'info');
+      store.showToast('GitHub 目录暂无可导入的油耗记录。', 'info');
       return;
     }
 
