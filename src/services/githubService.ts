@@ -26,12 +26,13 @@ interface GithubContentFileBody {
 
 interface FuelBalanceAdjustmentGithubEntry {
   id: string;
+  source: 'manual' | 'records';
   recordedAt: string;
   recordedAtUnix: number;
   balanceChangedAt: string;
   balanceChangedAtUnix: number;
-  remainingFuelLiters: number;
-  autoCalculatedFuelLiters: number;
+  remainingFuelLiters: number | null;
+  autoCalculatedFuelLiters: number | null;
   manualOffsetLiters: number;
 }
 
@@ -131,14 +132,24 @@ function normalizeFuelBalanceAdjustmentPayload(value: unknown): FuelBalanceAdjus
       }
 
       const value = item as Partial<FuelBalanceAdjustmentGithubEntry>;
+      const remainingFuelLiters =
+        value.remainingFuelLiters === null ? null : Number.isFinite(value.remainingFuelLiters) ? Number(value.remainingFuelLiters) : undefined;
+      const autoCalculatedFuelLiters =
+        value.autoCalculatedFuelLiters === null
+          ? null
+          : Number.isFinite(value.autoCalculatedFuelLiters)
+            ? Number(value.autoCalculatedFuelLiters)
+            : undefined;
+
       if (
         typeof value.id !== 'string' ||
+        (value.source !== undefined && value.source !== 'manual' && value.source !== 'records') ||
         typeof value.recordedAt !== 'string' ||
         !Number.isFinite(value.recordedAtUnix) ||
         typeof value.balanceChangedAt !== 'string' ||
         !Number.isFinite(value.balanceChangedAtUnix) ||
-        !Number.isFinite(value.remainingFuelLiters) ||
-        !Number.isFinite(value.autoCalculatedFuelLiters) ||
+        remainingFuelLiters === undefined ||
+        autoCalculatedFuelLiters === undefined ||
         !Number.isFinite(value.manualOffsetLiters)
       ) {
         return null;
@@ -146,12 +157,13 @@ function normalizeFuelBalanceAdjustmentPayload(value: unknown): FuelBalanceAdjus
 
       return {
         id: value.id,
+        source: value.source === 'records' ? 'records' : 'manual',
         recordedAt: value.recordedAt,
         recordedAtUnix: Number(value.recordedAtUnix),
         balanceChangedAt: value.balanceChangedAt,
         balanceChangedAtUnix: Number(value.balanceChangedAtUnix),
-        remainingFuelLiters: Number(value.remainingFuelLiters),
-        autoCalculatedFuelLiters: Number(value.autoCalculatedFuelLiters),
+        remainingFuelLiters,
+        autoCalculatedFuelLiters,
         manualOffsetLiters: Number(value.manualOffsetLiters),
       };
     })
@@ -161,6 +173,7 @@ function normalizeFuelBalanceAdjustmentPayload(value: unknown): FuelBalanceAdjus
 function toFuelBalanceAdjustmentGithubEntry(log: FuelBalanceAdjustmentLog): FuelBalanceAdjustmentGithubEntry {
   return {
     id: log.id,
+    source: log.source,
     recordedAt: log.recordedAt,
     recordedAtUnix: log.recordedAtUnix,
     balanceChangedAt: log.balanceChangedAt,
@@ -328,6 +341,14 @@ export async function appendFuelBalanceAdjustmentToGithub(
     }
 
     currentEntries = normalizeFuelBalanceAdjustmentPayload(parsed);
+  }
+
+  const exists = currentEntries.some((entry) => entry.id === adjustment.id);
+  if (exists) {
+    return {
+      path,
+      sha,
+    };
   }
 
   const payloadEntries = [...currentEntries, toFuelBalanceAdjustmentGithubEntry(adjustment)];

@@ -78,7 +78,11 @@
         <template v-if="latestTripRecord">
           <p>{{ toLocalDateTime(latestTripRecord.createdAt) }}</p>
           <p>{{ latestTripRecord.distanceKm.toFixed(2) }} km · {{ latestTripRecord.consumedFuelLiters.toFixed(3) }} L</p>
-          <p class="muted">{{ latestTripRecord.startLocation || '未填起点' }} → {{ latestTripRecord.endLocation || '未填终点' }}</p>
+          <p class="muted route-text">
+            <span>{{ latestTripRecord.startLocation || '未填起点' }}</span>
+            <span class="route-arrow" aria-hidden="true">→</span>
+            <span>{{ latestTripRecord.endLocation || '未填终点' }}</span>
+          </p>
         </template>
         <p v-else class="muted">暂无油耗记录</p>
       </article>

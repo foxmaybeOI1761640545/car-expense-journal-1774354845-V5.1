@@ -65,6 +65,13 @@ interface SyncRecordsResult extends ImportRecordsResult {
   fetched: number;
 }
 
+interface RecalculateAndPersistOptions {
+  appendAdjustmentLog?: boolean;
+  adjustmentSource?: 'manual' | 'records';
+  balanceChangedAtUnix?: number;
+  submitAdjustmentToGithub?: boolean;
+}
+
 let toastTimer: number | null = null;
 
 const state = reactive<AppStoreState>({
@@ -129,15 +136,24 @@ function sanitizeFuelBalanceAdjustment(raw: unknown): FuelBalanceAdjustmentLog |
   }
 
   const value = raw as Partial<FuelBalanceAdjustmentLog>;
+  const remainingFuelLiters =
+    value.remainingFuelLiters === null ? null : Number.isFinite(value.remainingFuelLiters) ? Number(value.remainingFuelLiters) : undefined;
+  const autoCalculatedFuelLiters =
+    value.autoCalculatedFuelLiters === null
+      ? null
+      : Number.isFinite(value.autoCalculatedFuelLiters)
+        ? Number(value.autoCalculatedFuelLiters)
+        : undefined;
 
   if (
     typeof value.id !== 'string' ||
+    (value.source !== undefined && value.source !== 'manual' && value.source !== 'records') ||
     typeof value.recordedAt !== 'string' ||
     !Number.isFinite(value.recordedAtUnix) ||
     typeof value.balanceChangedAt !== 'string' ||
     !Number.isFinite(value.balanceChangedAtUnix) ||
-    !Number.isFinite(value.remainingFuelLiters) ||
-    !Number.isFinite(value.autoCalculatedFuelLiters) ||
+    remainingFuelLiters === undefined ||
+    autoCalculatedFuelLiters === undefined ||
     !Number.isFinite(value.manualOffsetLiters)
   ) {
     return null;
@@ -145,12 +161,13 @@ function sanitizeFuelBalanceAdjustment(raw: unknown): FuelBalanceAdjustmentLog |
 
   return {
     id: value.id,
+    source: value.source === 'records' ? 'records' : 'manual',
     recordedAt: value.recordedAt,
     recordedAtUnix: Number(value.recordedAtUnix),
     balanceChangedAt: value.balanceChangedAt,
     balanceChangedAtUnix: Number(value.balanceChangedAtUnix),
-    remainingFuelLiters: roundTo(Number(value.remainingFuelLiters), 3),
-    autoCalculatedFuelLiters: roundTo(Number(value.autoCalculatedFuelLiters), 3),
+    remainingFuelLiters: remainingFuelLiters === null ? null : roundTo(remainingFuelLiters, 3),
+    autoCalculatedFuelLiters: autoCalculatedFuelLiters === null ? null : roundTo(autoCalculatedFuelLiters, 3),
     manualOffsetLiters: roundTo(Number(value.manualOffsetLiters), 3),
     submittedToGithub: Boolean(value.submittedToGithub),
     githubPath: typeof value.githubPath === 'string' ? value.githubPath : undefined,
@@ -299,7 +316,11 @@ function mergeRecords(records: AppRecord[]): { added: number; skipped: number } 
 
   if (added > 0) {
     state.records = [...state.records].sort(compareRecordsByTimeAsc);
-    recalculateAndPersist();
+    recalculateAndPersist({
+      appendAdjustmentLog: true,
+      adjustmentSource: 'records',
+      balanceChangedAtUnix: nowUnixSeconds(),
+    });
   }
 
   return { added, skipped };
@@ -323,9 +344,76 @@ function unixSecondsToIsoString(unixSeconds: number): string {
   return date.toISOString();
 }
 
-function recalculateAndPersist(): void {
-  state.fuelBalance = recalculateFuelBalance(state.records, state.fuelBalance);
+function normalizeNullableLiters(value: number | null): number | null {
+  if (value === null || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return roundTo(Number(value), 3);
+}
+
+function isFuelBalanceChanged(previous: FuelBalanceState, next: FuelBalanceState): boolean {
+  return (
+    previous.baselineEstablished !== next.baselineEstablished ||
+    previous.baselineAnchorUnix !== next.baselineAnchorUnix ||
+    normalizeNullableLiters(previous.autoCalculatedFuelLiters) !== normalizeNullableLiters(next.autoCalculatedFuelLiters) ||
+    roundTo(previous.manualOffsetLiters, 3) !== roundTo(next.manualOffsetLiters, 3) ||
+    normalizeNullableLiters(previous.remainingFuelLiters) !== normalizeNullableLiters(next.remainingFuelLiters) ||
+    previous.anomaly !== next.anomaly
+  );
+}
+
+function appendFuelBalanceAdjustmentLog(input: {
+  source: 'manual' | 'records';
+  balanceChangedAtUnix: number;
+  balance: FuelBalanceState;
+}): FuelBalanceAdjustmentLog {
+  const balanceChangedAtUnix = Math.floor(input.balanceChangedAtUnix);
+  const adjustment: FuelBalanceAdjustmentLog = {
+    id: makeRecordId('fuel-balance-adjustment'),
+    source: input.source,
+    recordedAt: nowIsoString(),
+    recordedAtUnix: nowUnixSeconds(),
+    balanceChangedAt: unixSecondsToIsoString(balanceChangedAtUnix),
+    balanceChangedAtUnix,
+    remainingFuelLiters: normalizeNullableLiters(input.balance.remainingFuelLiters),
+    autoCalculatedFuelLiters: normalizeNullableLiters(input.balance.autoCalculatedFuelLiters),
+    manualOffsetLiters: roundTo(input.balance.manualOffsetLiters, 3),
+    submittedToGithub: false,
+  };
+
+  state.fuelBalanceAdjustments.push(adjustment);
+  state.fuelBalanceAdjustments = [...state.fuelBalanceAdjustments].sort(compareFuelBalanceAdjustmentsByTimeAsc);
   persistState();
+  return adjustment;
+}
+
+function trySubmitFuelBalanceAdjustmentInBackground(adjustmentId: string): void {
+  void submitFuelBalanceAdjustment(adjustmentId).catch(() => {
+    // Keep it pending in localStorage. User can retry from Home page.
+  });
+}
+
+function recalculateAndPersist(options: RecalculateAndPersistOptions = {}): void {
+  const previousBalance = state.fuelBalance;
+  const nextBalance = recalculateFuelBalance(state.records, state.fuelBalance);
+  state.fuelBalance = nextBalance;
+  persistState();
+
+  if (!options.appendAdjustmentLog || !isFuelBalanceChanged(previousBalance, nextBalance)) {
+    return;
+  }
+
+  const balanceChangedAtUnix = Number.isFinite(options.balanceChangedAtUnix) ? Number(options.balanceChangedAtUnix) : nowUnixSeconds();
+  const adjustment = appendFuelBalanceAdjustmentLog({
+    source: options.adjustmentSource ?? 'records',
+    balanceChangedAtUnix,
+    balance: nextBalance,
+  });
+
+  if (options.submitAdjustmentToGithub !== false) {
+    trySubmitFuelBalanceAdjustmentInBackground(adjustment.id);
+  }
 }
 
 function showToast(message: string, type: 'success' | 'error' | 'info' = 'info'): void {
@@ -400,7 +488,11 @@ function addFuelRecord(input: FuelRecordInput): FuelRecord {
   };
 
   state.records.push(record);
-  recalculateAndPersist();
+  recalculateAndPersist({
+    appendAdjustmentLog: true,
+    adjustmentSource: 'records',
+    balanceChangedAtUnix: createdAtUnix,
+  });
   return record;
 }
 
@@ -434,7 +526,11 @@ function addTripRecord(input: TripRecordInput): TripRecord {
   };
 
   state.records.push(record);
-  recalculateAndPersist();
+  recalculateAndPersist({
+    appendAdjustmentLog: true,
+    adjustmentSource: 'records',
+    balanceChangedAtUnix: createdAtUnix,
+  });
   return record;
 }
 
@@ -446,7 +542,11 @@ function deleteRecord(recordId: string): void {
   }
 
   state.records = next;
-  recalculateAndPersist();
+  recalculateAndPersist({
+    appendAdjustmentLog: true,
+    adjustmentSource: 'records',
+    balanceChangedAtUnix: nowUnixSeconds(),
+  });
 }
 
 function resetFuelBaseline(): void {
@@ -454,7 +554,11 @@ function resetFuelBaseline(): void {
     ...state.fuelBalance,
     manualOffsetLiters: 0,
   };
-  recalculateAndPersist();
+  recalculateAndPersist({
+    appendAdjustmentLog: true,
+    adjustmentSource: 'manual',
+    balanceChangedAtUnix: nowUnixSeconds(),
+  });
 }
 
 function isRecordSubmitting(recordId: string): boolean {
@@ -516,9 +620,6 @@ async function updateRemainingFuelLiters(input: UpdateFuelBalanceInput): Promise
 
   const balanceChangedAtUnixRaw = Number.isFinite(input.balanceChangedAtUnix) ? Number(input.balanceChangedAtUnix) : nowUnixSeconds();
   const balanceChangedAtUnix = Math.floor(balanceChangedAtUnixRaw);
-  const balanceChangedAt = unixSecondsToIsoString(balanceChangedAtUnix);
-  const recordedAtUnix = nowUnixSeconds();
-  const recordedAt = nowIsoString();
 
   state.fuelBalance = {
     ...snapshotBalance,
@@ -526,21 +627,11 @@ async function updateRemainingFuelLiters(input: UpdateFuelBalanceInput): Promise
   };
   state.fuelBalance = recalculateFuelBalance(state.records, state.fuelBalance);
 
-  const adjustment: FuelBalanceAdjustmentLog = {
-    id: makeRecordId('fuel-balance-adjustment'),
-    recordedAt,
-    recordedAtUnix,
-    balanceChangedAt,
+  const adjustment = appendFuelBalanceAdjustmentLog({
+    source: 'manual',
     balanceChangedAtUnix,
-    remainingFuelLiters: normalizedRemaining,
-    autoCalculatedFuelLiters,
-    manualOffsetLiters,
-    submittedToGithub: false,
-  };
-
-  state.fuelBalanceAdjustments.push(adjustment);
-  state.fuelBalanceAdjustments = [...state.fuelBalanceAdjustments].sort(compareFuelBalanceAdjustmentsByTimeAsc);
-  persistState();
+    balance: state.fuelBalance,
+  });
 
   try {
     const result = await submitFuelBalanceAdjustment(adjustment.id);

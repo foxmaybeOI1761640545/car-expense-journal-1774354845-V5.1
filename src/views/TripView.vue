@@ -131,7 +131,11 @@
               平均油耗 {{ record.averageFuelConsumptionPer100Km.toFixed(2) }} L/100km · 行驶 {{ record.distanceKm.toFixed(2) }} km ·
               耗油 {{ record.consumedFuelLiters.toFixed(3) }} L · 油价 {{ formatTripPrice(record) }} · 费用 {{ formatTripCost(record) }}
             </p>
-            <p class="muted">{{ record.startLocation || '未填起点' }} → {{ record.endLocation || '未填终点' }}</p>
+            <p class="muted route-text">
+              <span>{{ record.startLocation || '未填起点' }}</span>
+              <span class="route-arrow" aria-hidden="true">→</span>
+              <span>{{ record.endLocation || '未填终点' }}</span>
+            </p>
             <p class="muted">{{ record.note || '无备注' }}</p>
 
             <div class="inline-actions">

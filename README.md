@@ -20,7 +20,7 @@
   - 页面设置
 - 默认配置文件初始化（`public/config/app-config.json`）
 - 前端直接调用 GitHub REST API（Repository Contents）提交记录 JSON（支持单条/批量）
-- 剩余油量手动变更会写入独立日志文件 `fuel-balance-adjustments.json`（持续追加）
+- 剩余油量每次变更（手动修正 / 记录引起的自动变化）都会写入独立日志文件 `fuel-balance-adjustments.json`（持续追加）
 - 支持从 GitHub 拉取历史 JSON 并合并到本地（自动去重）
 - 历史记录倒序展示、筛选、删除、导出 JSON/CSV
 - 油耗页支持导入 JSON、批量提交与 GitHub 历史拉取
@@ -162,6 +162,9 @@ JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
 - 支持手动修改“当前剩余油量”：
   - 系统会记录修正偏移量，后续新增记录仍会连续自动计算
   - 每次手动修改都会生成一条日志（记录时间戳、油量变更时间戳、剩余油量、自动估算值、修正量）
+- 加油/油耗记录发生变更时（新增、删除、导入）：
+  - 会同步重新计算剩余油量
+  - 若剩余油量状态发生变化，会自动追加一条 `source=records` 日志
   - 日志本地持久化，并自动尝试提交到 GitHub 独立文件：`<githubRecordsDir>/fuel-balance-adjustments.json`
   - 若自动提交失败，可在首页点击“同步未提交油量日志”
 - 首页“清除手动修正”会将修正偏移量归零，恢复为纯自动估算值

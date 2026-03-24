@@ -100,6 +100,21 @@ p {
   font-size: 14px;
 }
 
+.route-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.route-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transform: translateY(-0.02em);
+}
+
 .value {
   margin-top: 10px;
   font-size: 26px;

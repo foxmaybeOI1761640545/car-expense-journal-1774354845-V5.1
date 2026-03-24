@@ -12,12 +12,13 @@ export interface FuelBalanceState {
 
 export interface FuelBalanceAdjustmentLog {
   id: string;
+  source: 'manual' | 'records';
   recordedAt: string;
   recordedAtUnix: number;
   balanceChangedAt: string;
   balanceChangedAtUnix: number;
-  remainingFuelLiters: number;
-  autoCalculatedFuelLiters: number;
+  remainingFuelLiters: number | null;
+  autoCalculatedFuelLiters: number | null;
   manualOffsetLiters: number;
   submittedToGithub: boolean;
   githubPath?: string;
