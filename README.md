@@ -41,16 +41,16 @@ npm run preview
 
 项目支持通过 `VITE_BASE_PATH` 控制构建基路径。
 
-1. 在仓库中启用 GitHub Pages（推荐使用 Actions 部署）。
-2. 构建时设置环境变量：
-   - `VITE_BASE_PATH=/<你的仓库名>/`
-3. 执行：
-   - `npm ci`
-   - `npm run build`
-4. 发布 `dist/` 到 GitHub Pages。
+已内置工作流文件：`.github/workflows/deploy-pages.yml`。
 
-示例（仓库名 `car-journal`）：
-- `VITE_BASE_PATH=/car-journal/`
+1. 在仓库 `Settings -> Pages` 中将 Source 设为 `GitHub Actions`。
+2. 推送到 `main` 分支后会自动触发部署。
+3. 工作流会自动设置：
+   - `VITE_BASE_PATH=/<当前仓库名>/`
+4. 部署完成后可在 `Actions` 页查看日志，并在 `Settings -> Pages` 查看站点链接。
+
+如果需要手动构建，示例（仓库名 `car-journal`）：
+- `VITE_BASE_PATH=/car-journal/ npm run build`
 
 ## GitHub Token 配置
 
