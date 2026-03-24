@@ -4,6 +4,7 @@ import { DEFAULT_APP_CONFIG } from '../types/config';
 import type { AppRecord, FuelRecord, TripRecord } from '../types/records';
 import type { AppStoreState, FuelBalanceState } from '../types/store';
 import { createEmptyFuelBalance, recalculateFuelBalance } from '../services/balanceService';
+import { applyBranding } from '../services/brandingService';
 import { loadConfigFile, resolveAppConfig } from '../services/configService';
 import { submitRecordToGithub } from '../services/githubService';
 import { loadAppData, loadLocalConfig, saveAppData, saveLocalConfig } from '../services/localStorageService';
@@ -188,6 +189,7 @@ export async function initializeStore(): Promise<void> {
   const [fileConfig, localConfig, persistedData] = await Promise.all([loadConfigFile(), Promise.resolve(loadLocalConfig()), Promise.resolve(loadAppData())]);
 
   state.config = resolveAppConfig(fileConfig, localConfig);
+  applyBranding(state.config);
   state.records = sanitizeRecords(persistedData.records);
   state.fuelBalance = sanitizeFuelBalance(persistedData.fuelBalance);
   state.fuelBalance = recalculateFuelBalance(state.records, state.fuelBalance);
@@ -201,6 +203,7 @@ function updateConfig(partial: Partial<AppConfig>): void {
     ...state.config,
     ...partial,
   };
+  applyBranding(state.config);
   saveLocalConfig(state.config);
 }
 

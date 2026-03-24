@@ -5,6 +5,13 @@ import { parsePositiveNumber, roundTo } from '../utils/number';
 function sanitizePartialConfig(raw: Partial<AppConfig>): Partial<AppConfig> {
   const next: Partial<AppConfig> = {};
 
+  if (typeof raw.pageTitle === 'string' && raw.pageTitle.trim()) {
+    next.pageTitle = raw.pageTitle.trim();
+  }
+  if (typeof raw.pageFavicon === 'string' && raw.pageFavicon.trim()) {
+    next.pageFavicon = raw.pageFavicon.trim();
+  }
+
   if (typeof raw.defaultProvince === 'string') {
     next.defaultProvince = raw.defaultProvince;
   }
@@ -34,7 +41,7 @@ function sanitizePartialConfig(raw: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof raw.githubRepo === 'string') {
     next.githubRepo = raw.githubRepo.trim();
   }
-  if (typeof raw.githubBranch === 'string' && raw.githubBranch.trim()) {
+  if (typeof raw.githubBranch === 'string') {
     next.githubBranch = raw.githubBranch.trim();
   }
   if (typeof raw.githubToken === 'string') {

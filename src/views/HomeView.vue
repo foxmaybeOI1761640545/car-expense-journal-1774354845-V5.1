@@ -7,8 +7,8 @@
         <p class="subtitle">记录加油、油耗与车辆剩余油量估算</p>
       </div>
       <div class="quick-actions">
-        <button class="btn btn--primary btn--large" @click="router.push('/fuel')">去加油记录</button>
-        <button class="btn btn--secondary btn--large" @click="router.push('/trip')">去油耗记录</button>
+        <button class="btn btn--primary btn--large" @click="router.push('/fuel')">加油记录</button>
+        <button class="btn btn--secondary btn--large" @click="router.push('/trip')">油耗记录</button>
       </div>
     </section>
 
@@ -85,7 +85,7 @@
 
       <article class="card settings-card">
         <h2>页面设置</h2>
-        <p class="muted">可修改默认值和 GitHub 配置，保存后写入 localStorage。</p>
+        <p class="muted">可修改默认值和 GitHub 配置，保存后写入 localStorage。配置文件路径：public/config/app-config.json。</p>
         <form class="settings-form" @submit.prevent="saveSettings">
           <label>
             默认省份
@@ -125,7 +125,7 @@
           </label>
           <label>
             GitHub Branch
-            <input v-model="settings.githubBranch" type="text" placeholder="main" />
+            <input v-model="settings.githubBranch" type="text" placeholder="留空使用仓库默认分支" />
           </label>
           <label>
             GitHub Token
@@ -202,7 +202,7 @@ function saveSettings(): void {
     defaultFuelNote: settings.defaultFuelNote,
     githubOwner: settings.githubOwner.trim(),
     githubRepo: settings.githubRepo.trim(),
-    githubBranch: settings.githubBranch.trim() || 'main',
+    githubBranch: settings.githubBranch.trim(),
     githubToken: settings.githubToken.trim(),
     githubRecordsDir: settings.githubRecordsDir.trim() || 'data/records',
     preferConfigOverLocalStorage: settings.preferConfigOverLocalStorage,

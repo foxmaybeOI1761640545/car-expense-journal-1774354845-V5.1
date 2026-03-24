@@ -36,11 +36,11 @@ function encodeContentPath(path: string): string {
 }
 
 function validateGithubConfig(config: AppConfig): void {
-  const requiredFields: Array<keyof AppConfig> = ['githubOwner', 'githubRepo', 'githubBranch', 'githubToken', 'githubRecordsDir'];
+  const requiredFields: Array<keyof AppConfig> = ['githubOwner', 'githubRepo', 'githubToken', 'githubRecordsDir'];
   const missing = requiredFields.filter((field) => !String(config[field] ?? '').trim());
 
   if (missing.length > 0) {
-    throw new Error('GitHub 配置不完整，请先在首页设置 owner/repo/branch/token/recordsDir。');
+    throw new Error('GitHub 配置不完整，请先在首页设置 owner/repo/token/recordsDir。');
   }
 }
 
@@ -52,11 +52,19 @@ export async function submitRecordToGithub(record: AppRecord, config: AppConfig)
   const path = `${recordsDir}/${unixTime}.json`;
   const endpoint = `https://api.github.com/repos/${encodeURIComponent(config.githubOwner)}/${encodeURIComponent(config.githubRepo)}/contents/${encodeContentPath(path)}`;
 
-  const payload = {
+  const payload: {
+    message: string;
+    content: string;
+    branch?: string;
+  } = {
     message: `chore(records): add ${record.type} record ${unixTime}`,
     content: toBase64Utf8(JSON.stringify(record, null, 2)),
-    branch: config.githubBranch,
   };
+
+  const branch = config.githubBranch.trim();
+  if (branch) {
+    payload.branch = branch;
+  }
 
   const response = await fetch(endpoint, {
     method: 'PUT',

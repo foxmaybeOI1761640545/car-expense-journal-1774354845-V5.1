@@ -57,7 +57,7 @@ npm run preview
 在首页“页面设置”中填写以下字段：
 - `githubOwner`
 - `githubRepo`
-- `githubBranch`
+- `githubBranch`（可留空，留空时使用仓库默认分支）
 - `githubToken`
 - `githubRecordsDir`
 
@@ -70,6 +70,8 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 文件路径：`public/config/app-config.json`
 
 支持字段：
+- `pageTitle`（网页标题）
+- `pageFavicon`（网页图标路径，建议使用相对路径如 `favicon.svg`）
 - `defaultProvince`
 - `defaultFuelType`
 - `defaultFuelPrice`
@@ -79,7 +81,7 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 - `defaultFuelNote`
 - `githubOwner`
 - `githubRepo`
-- `githubBranch`
+- `githubBranch`（可留空，留空时使用仓库默认分支）
 - `githubToken`
 - `githubRecordsDir`
 - `preferConfigOverLocalStorage`
@@ -88,6 +90,11 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 1. 读取 `public/config/app-config.json`
 2. 读取 localStorage
 3. 按 `preferConfigOverLocalStorage` 决定优先级
+
+说明：
+- 配置文件本体位于 `public/config/app-config.json`（部署后对应站点下 `/config/app-config.json`）。
+- 未勾选 `preferConfigOverLocalStorage` 时，localStorage 优先，配置文件作为兜底默认值使用。
+- 页面设置保存后会写入 localStorage 键：`car-journal-config-v1`。
 
 若配置文件缺失，应用会使用内置默认值并正常运行。
 
@@ -153,6 +160,7 @@ src/
     index.ts
   services/
     balanceService.ts
+    brandingService.ts
     configService.ts
     githubService.ts
     localStorageService.ts

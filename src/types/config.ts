@@ -1,4 +1,6 @@
 ﻿export interface AppConfig {
+  pageTitle: string;
+  pageFavicon: string;
   defaultProvince: string;
   defaultFuelType: number;
   defaultFuelPrice: number;
@@ -15,7 +17,9 @@
 }
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
-  defaultProvince: '',
+  pageTitle: '行驶油耗记录',
+  pageFavicon: 'favicon.svg',
+  defaultProvince: '广东',
   defaultFuelType: 92,
   defaultFuelPrice: 7.5,
   defaultAverageFuelConsumptionPer100Km: 7.8,
@@ -24,7 +28,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   defaultFuelNote: '',
   githubOwner: '',
   githubRepo: '',
-  githubBranch: 'main',
+  githubBranch: '',
   githubToken: '',
   githubRecordsDir: 'data/records',
   preferConfigOverLocalStorage: false,
