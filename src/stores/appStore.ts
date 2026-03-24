@@ -6,7 +6,7 @@ import type { AppStoreState, FuelBalanceState } from '../types/store';
 import { createEmptyFuelBalance, recalculateFuelBalance } from '../services/balanceService';
 import { applyBranding } from '../services/brandingService';
 import { loadConfigFile, resolveAppConfig } from '../services/configService';
-import { submitRecordToGithub } from '../services/githubService';
+import { fetchRecordsFromGithub, submitRecordToGithub } from '../services/githubService';
 import { loadAppData, loadLocalConfig, saveAppData, saveLocalConfig } from '../services/localStorageService';
 import { nowIsoString, nowUnixSeconds } from '../utils/date';
 import { parsePositiveNumber, roundTo } from '../utils/number';
@@ -30,6 +30,19 @@ interface TripRecordInput {
   note?: string;
 }
 
+interface ImportRecordsResult {
+  added: number;
+  skipped: number;
+  invalid: number;
+}
+
+interface BatchSubmitResult {
+  successCount: number;
+  failedCount: number;
+  successRecordIds: string[];
+  failures: Array<{ recordId: string; message: string }>;
+}
+
 let toastTimer: number | null = null;
 
 const state = reactive<AppStoreState>({
@@ -44,6 +57,14 @@ const state = reactive<AppStoreState>({
     type: 'info',
   },
 });
+
+function compareRecordsByTimeAsc(a: AppRecord, b: AppRecord): number {
+  if (a.createdAtUnix === b.createdAtUnix) {
+    return a.createdAt.localeCompare(b.createdAt);
+  }
+
+  return a.createdAtUnix - b.createdAtUnix;
+}
 
 function persistState(): void {
   saveAppData({
@@ -155,12 +176,53 @@ function sanitizeRecords(records: unknown): AppRecord[] {
   return records
     .map((item) => sanitizeRecord(item))
     .filter((item): item is AppRecord => item !== null)
-    .sort((a, b) => {
-      if (a.createdAtUnix === b.createdAtUnix) {
-        return a.createdAt.localeCompare(b.createdAt);
-      }
-      return a.createdAtUnix - b.createdAtUnix;
-    });
+    .sort(compareRecordsByTimeAsc);
+}
+
+function normalizeImportPayload(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) {
+    return raw;
+  }
+
+  if (raw && typeof raw === 'object') {
+    const value = raw as { records?: unknown };
+
+    if (Array.isArray(value.records)) {
+      return value.records;
+    }
+
+    return [raw];
+  }
+
+  return [];
+}
+
+function mergeRecords(records: AppRecord[]): { added: number; skipped: number } {
+  if (records.length === 0) {
+    return { added: 0, skipped: 0 };
+  }
+
+  const existingIds = new Set(state.records.map((record) => record.id));
+  let added = 0;
+  let skipped = 0;
+
+  for (const record of records.sort(compareRecordsByTimeAsc)) {
+    if (existingIds.has(record.id)) {
+      skipped += 1;
+      continue;
+    }
+
+    state.records.push(record);
+    existingIds.add(record.id);
+    added += 1;
+  }
+
+  if (added > 0) {
+    state.records = [...state.records].sort(compareRecordsByTimeAsc);
+    recalculateAndPersist();
+  }
+
+  return { added, skipped };
 }
 
 function makeRecordId(type: 'fuel' | 'trip'): string {
@@ -338,6 +400,91 @@ async function submitRecord(recordId: string): Promise<{ path: string; sha?: str
   }
 }
 
+function importRecords(raw: unknown): ImportRecordsResult {
+  const candidates = normalizeImportPayload(raw);
+
+  if (candidates.length === 0) {
+    return { added: 0, skipped: 0, invalid: 0 };
+  }
+
+  const sanitized: AppRecord[] = [];
+  let invalid = 0;
+
+  for (const item of candidates) {
+    const normalized = sanitizeRecord(item);
+
+    if (normalized === null) {
+      invalid += 1;
+      continue;
+    }
+
+    sanitized.push(normalized);
+  }
+
+  const merged = mergeRecords(sanitized);
+
+  return {
+    added: merged.added,
+    skipped: merged.skipped,
+    invalid,
+  };
+}
+
+async function submitRecords(recordIds: string[]): Promise<BatchSubmitResult> {
+  const uniqueIds = Array.from(new Set(recordIds));
+  const successRecordIds: string[] = [];
+  const failures: Array<{ recordId: string; message: string }> = [];
+
+  for (const recordId of uniqueIds) {
+    const exists = state.records.some((record) => record.id === recordId);
+
+    if (!exists) {
+      failures.push({
+        recordId,
+        message: '记录不存在，已跳过。',
+      });
+      continue;
+    }
+
+    try {
+      await submitRecord(recordId);
+      successRecordIds.push(recordId);
+    } catch (error) {
+      failures.push({
+        recordId,
+        message: error instanceof Error ? error.message : '提交失败。',
+      });
+    }
+  }
+
+  return {
+    successCount: successRecordIds.length,
+    failedCount: failures.length,
+    successRecordIds,
+    failures,
+  };
+}
+
+async function syncRecordsFromGithub(): Promise<ImportRecordsResult & { fetched: number }> {
+  const githubRecords = await fetchRecordsFromGithub(state.config);
+  const normalizedFromGithub = githubRecords.map((item) => {
+    if (!item || typeof item !== 'object') {
+      return item;
+    }
+
+    return {
+      ...(item as Record<string, unknown>),
+      submittedToGithub: true,
+    };
+  });
+  const importResult = importRecords(normalizedFromGithub);
+
+  return {
+    fetched: githubRecords.length,
+    ...importResult,
+  };
+}
+
 export function useAppStore() {
   return {
     state,
@@ -347,7 +494,10 @@ export function useAppStore() {
     addTripRecord,
     deleteRecord,
     resetFuelBaseline,
+    importRecords,
     submitRecord,
+    submitRecords,
+    syncRecordsFromGithub,
     isRecordSubmitting,
     showToast,
     hideToast,

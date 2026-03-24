@@ -410,6 +410,30 @@ select:focus {
   gap: 8px;
 }
 
+.batch-bar {
+  display: grid;
+  gap: 8px;
+  border: 1px dashed var(--color-border);
+  border-radius: 12px;
+  background: #fff8ee;
+  padding: 10px;
+}
+
+.checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.checkbox-inline input {
+  width: 16px;
+  height: 16px;
+}
+
+.visually-hidden {
+  display: none;
+}
+
 .history-item {
   border: 1px solid var(--color-border);
   border-radius: 12px;

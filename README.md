@@ -18,8 +18,10 @@
   - 剩余油量基准状态
   - 页面设置
 - 默认配置文件初始化（`public/config/app-config.json`）
-- 前端直接调用 GitHub REST API（Repository Contents）提交单条记录 JSON
+- 前端直接调用 GitHub REST API（Repository Contents）提交记录 JSON（支持单条/批量）
+- 支持从 GitHub 拉取历史 JSON 并合并到本地（自动去重）
 - 历史记录倒序展示、筛选、删除、导出 JSON/CSV
+- 油耗页支持导入 JSON、批量提交与 GitHub 历史拉取
 - 响应式布局（桌面/平板/手机）
 
 ## 本地运行
@@ -107,11 +109,15 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 
 ### 提交到 GitHub
 - 可对单条记录点击“提交到 GitHub”。
+- 油耗页支持“多选提交”和“一键提交全部未提交”。
 - 使用 `PUT /repos/{owner}/{repo}/contents/{path}`。
-- 文件命名：`<githubRecordsDir>/<10位Unix秒时间戳>.json`
-  - 例如：`data/records/1742788800.json`
-- 如果同秒重复提交导致冲突，会提示：
-  - `同一秒内重复提交，请稍后重试`
+- 文件命名：`<githubRecordsDir>/<10位Unix秒时间戳>-<record.id>.json`
+  - 例如：`data/records/1742788800-trip-a1b2c3.json`
+
+### 从 GitHub 拉取历史
+- 油耗页支持点击“从 GitHub 拉取历史”。
+- 会读取 `githubRecordsDir` 下的 JSON 文件，解析后合并到本地记录。
+- 合并时会按 `id` 去重，重复项跳过，并提示新增/重复/无效数量。
 
 JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
 
@@ -133,7 +139,7 @@ JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
 - 油耗记录页 `/#/trip`
   - 顶部返回首页
   - 油耗表单（自动计算耗油量）
-  - 历史记录（筛选/删除/导出/提交）
+  - 历史记录（筛选/删除/导出/导入/单条与批量提交/拉取 GitHub 历史）
 
 ## 剩余油量统计逻辑
 
