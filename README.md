@@ -1,0 +1,175 @@
+﻿# 用车记录本
+
+基于 `Vite + Vue 3 + TypeScript` 的单页应用，用于记录：
+- 加油记录
+- 油耗记录
+
+并按“加油增加、行驶减少”的方式估算当前剩余油量。
+
+## 功能概览
+
+- 三页面 SPA（Vue Router）
+  - 首页 `/#/`
+  - 加油记录页 `/#/fuel`
+  - 油耗记录页 `/#/trip`
+- 本地存储（localStorage）
+  - 记录数据
+  - 剩余油量基准状态
+  - 页面设置
+- 默认配置文件初始化（`public/config/app-config.json`）
+- 前端直接调用 GitHub REST API（Repository Contents）提交单条记录 JSON
+- 历史记录倒序展示、筛选、删除、导出 JSON/CSV
+- 响应式布局（桌面/平板/手机）
+
+## 本地运行
+
+```bash
+npm install
+npm run dev
+```
+
+默认地址：`http://localhost:5173`
+
+## 构建
+
+```bash
+npm run build
+npm run preview
+```
+
+## GitHub Pages 部署
+
+项目支持通过 `VITE_BASE_PATH` 控制构建基路径。
+
+1. 在仓库中启用 GitHub Pages（推荐使用 Actions 部署）。
+2. 构建时设置环境变量：
+   - `VITE_BASE_PATH=/<你的仓库名>/`
+3. 执行：
+   - `npm ci`
+   - `npm run build`
+4. 发布 `dist/` 到 GitHub Pages。
+
+示例（仓库名 `car-journal`）：
+- `VITE_BASE_PATH=/car-journal/`
+
+## GitHub Token 配置
+
+在首页“页面设置”中填写以下字段：
+- `githubOwner`
+- `githubRepo`
+- `githubBranch`
+- `githubToken`
+- `githubRecordsDir`
+
+Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and write` 权限。
+
+提示：Token 会存储在浏览器 localStorage，仅适合个人场景。
+
+## 默认配置文件修改
+
+文件路径：`public/config/app-config.json`
+
+支持字段：
+- `defaultProvince`
+- `defaultFuelType`
+- `defaultFuelPrice`
+- `defaultAverageFuelConsumptionPer100Km`
+- `defaultDistanceKm`
+- `defaultTripNote`
+- `defaultFuelNote`
+- `githubOwner`
+- `githubRepo`
+- `githubBranch`
+- `githubToken`
+- `githubRecordsDir`
+- `preferConfigOverLocalStorage`
+
+启动加载顺序：
+1. 读取 `public/config/app-config.json`
+2. 读取 localStorage
+3. 按 `preferConfigOverLocalStorage` 决定优先级
+
+若配置文件缺失，应用会使用内置默认值并正常运行。
+
+## 记录保存与提交
+
+### 本地保存
+- 所有新增/删除都会立即写入 localStorage。
+
+### 提交到 GitHub
+- 可对单条记录点击“提交到 GitHub”。
+- 使用 `PUT /repos/{owner}/{repo}/contents/{path}`。
+- 文件命名：`<githubRecordsDir>/<10位Unix秒时间戳>.json`
+  - 例如：`data/records/1742788800.json`
+- 如果同秒重复提交导致冲突，会提示：
+  - `同一秒内重复提交，请稍后重试`
+
+JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
+
+## 路由页面结构
+
+- 首页 `/#/`
+  - 概览仪表盘
+  - 剩余油量与基准状态
+  - 最近记录、累计统计
+  - 快捷入口、设置
+- 加油记录页 `/#/fuel`
+  - 顶部返回首页
+  - 加油表单（自动补算 + 一致性检查）
+  - 历史记录（筛选/删除/导出/提交）
+- 油耗记录页 `/#/trip`
+  - 顶部返回首页
+  - 油耗表单（自动计算耗油量）
+  - 历史记录（筛选/删除/导出/提交）
+
+## 剩余油量统计逻辑
+
+- 初始状态：未建立统计基准，剩余油量为未知。
+- 首次新增加油记录后：
+  - 建立统计基准
+  - 剩余油量从该条加油记录的油量开始估算
+- 后续新增记录：
+  - 加油：`remaining += fuelVolumeLiters`
+  - 油耗：`remaining -= consumedFuelLiters`
+- 若 `remaining < 0`：
+  - 标记异常并在首页提示基准可能不准确
+- 支持手动“重置统计基准”
+  - 重置后剩余油量回到未知
+  - 下次新增加油记录再重新起算
+
+## 目录结构
+
+```txt
+public/
+  config/app-config.json
+src/
+  assets/styles/main.css
+  components/
+    AppToast.vue
+    PageHeader.vue
+  composables/
+    useStatistics.ts
+  router/
+    index.ts
+  services/
+    balanceService.ts
+    configService.ts
+    githubService.ts
+    localStorageService.ts
+  stores/
+    appStore.ts
+  types/
+    config.ts
+    records.ts
+    store.ts
+  utils/
+    date.ts
+    export.ts
+    number.ts
+  views/
+    HomeView.vue
+    FuelView.vue
+    TripView.vue
+  App.vue
+  main.ts
+```

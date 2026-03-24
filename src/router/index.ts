@@ -1,0 +1,27 @@
+﻿import { createRouter, createWebHashHistory } from 'vue-router';
+import HomeView from '../views/HomeView.vue';
+import FuelView from '../views/FuelView.vue';
+import TripView from '../views/TripView.vue';
+
+const router = createRouter({
+  history: createWebHashHistory(import.meta.env.BASE_URL),
+  routes: [
+    {
+      path: '/',
+      name: 'home',
+      component: HomeView,
+    },
+    {
+      path: '/fuel',
+      name: 'fuel',
+      component: FuelView,
+    },
+    {
+      path: '/trip',
+      name: 'trip',
+      component: TripView,
+    },
+  ],
+});
+
+export default router;

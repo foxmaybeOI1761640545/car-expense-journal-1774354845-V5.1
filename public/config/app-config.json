@@ -1,0 +1,15 @@
+﻿{
+  "defaultProvince": "",
+  "defaultFuelType": 92,
+  "defaultFuelPrice": 7.5,
+  "defaultAverageFuelConsumptionPer100Km": 7.8,
+  "defaultDistanceKm": 100,
+  "defaultTripNote": "",
+  "defaultFuelNote": "",
+  "githubOwner": "",
+  "githubRepo": "",
+  "githubBranch": "main",
+  "githubToken": "",
+  "githubRecordsDir": "data/records",
+  "preferConfigOverLocalStorage": false
+}
