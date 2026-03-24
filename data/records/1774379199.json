@@ -1,0 +1,14 @@
+{
+  "id": "fuel-203e6b78-3bbd-4a97-846b-3ca41a074118",
+  "type": "fuel",
+  "createdAt": "2026-03-24T19:00:29.445Z",
+  "createdAtUnix": 1774378829,
+  "province": "广东",
+  "fuelType": 92,
+  "pricePerLiter": 7.66,
+  "fuelVolumeLiters": 21.19,
+  "totalPriceCny": 163,
+  "stationName": "闽能石化揭阳加油站",
+  "note": "20260322 20:28\n油价调整前补油",
+  "submittedToGithub": false
+}
