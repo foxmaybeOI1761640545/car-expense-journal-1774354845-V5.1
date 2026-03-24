@@ -9,6 +9,7 @@
       <div class="quick-actions">
         <button class="btn btn--primary btn--large" @click="router.push('/fuel')">加油记录</button>
         <button class="btn btn--secondary btn--large" @click="router.push('/trip')">油耗记录</button>
+        <button class="btn btn--ghost btn--large" @click="router.push('/guide')">应用说明</button>
       </div>
     </section>
 
@@ -137,8 +138,9 @@
           </label>
           <label class="checkbox-row">
             <input v-model="settings.preferConfigOverLocalStorage" type="checkbox" />
-            配置文件优先于 localStorage
+            <span>{{ configPriorityModeText }}</span>
           </label>
+          <p class="hint full-width">{{ configPriorityEffectText }}</p>
           <button class="btn btn--primary" type="submit">保存设置</button>
         </form>
       </article>
@@ -180,6 +182,16 @@ const remainingFuelText = computed(() => {
 });
 
 const baselineText = computed(() => (store.state.fuelBalance.baselineEstablished ? '已建立' : '未建立'));
+const configPriorityModeText = computed(() =>
+  settings.preferConfigOverLocalStorage
+    ? '当前模式：配置文件优先（已勾选）'
+    : '当前模式：localStorage 优先（未勾选）',
+);
+const configPriorityEffectText = computed(() =>
+  settings.preferConfigOverLocalStorage
+    ? '启动时优先使用 public/config/app-config.json；同名配置会覆盖 localStorage。'
+    : '启动时优先使用 localStorage；配置文件作为初始默认值。',
+);
 
 const settings = reactive<AppConfig>({ ...store.state.config });
 
