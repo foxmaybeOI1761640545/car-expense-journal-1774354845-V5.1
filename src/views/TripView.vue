@@ -1,6 +1,6 @@
 ﻿<template>
   <main class="page page--record">
-    <PageHeader title="油耗记录" description="录入平均油耗与里程，自动计算本次耗油量。" />
+    <PageHeader title="油耗记录" description="录入平均油耗、里程与油价，自动计算本次耗油量和费用。" />
 
     <section class="record-layout">
       <article class="card form-card">
@@ -14,6 +14,19 @@
           <label>
             行驶距离（km）
             <input v-model="form.distanceKm" type="number" min="0.01" step="0.01" inputmode="decimal" />
+          </label>
+
+          <label>
+            油价（元/升）
+            <input
+              v-model="form.pricePerLiter"
+              type="number"
+              min="0.01"
+              step="0.01"
+              inputmode="decimal"
+              :placeholder="latestFuelPricePerLiter === null ? '暂无加油记录，请手动输入油价' : ''"
+              required
+            />
           </label>
 
           <label>
@@ -32,6 +45,7 @@
           </label>
 
           <p class="hint full-width">本次耗油量自动计算：{{ consumedFuelPreview }}</p>
+          <p class="hint full-width">本次油耗费用自动计算：{{ tripFuelCostPreview }}</p>
 
           <button class="btn btn--primary full-width" type="submit">保存到本地</button>
         </form>
@@ -71,7 +85,7 @@
             </div>
             <p>
               平均油耗 {{ record.averageFuelConsumptionPer100Km.toFixed(2) }} L/100km · 行驶 {{ record.distanceKm.toFixed(2) }} km ·
-              耗油 {{ record.consumedFuelLiters.toFixed(3) }} L
+              耗油 {{ record.consumedFuelLiters.toFixed(3) }} L · 油价 {{ formatTripPrice(record) }} · 费用 {{ formatTripCost(record) }}
             </p>
             <p class="muted">{{ record.startLocation || '未填起点' }} → {{ record.endLocation || '未填终点' }}</p>
             <p class="muted">{{ record.note || '无备注' }}</p>
@@ -96,19 +110,36 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import { useAppStore } from '../stores/appStore';
-import type { TripRecord } from '../types/records';
+import type { FuelRecord, TripRecord } from '../types/records';
 import { toLocalDateTime } from '../utils/date';
 import { exportCsv, exportJson } from '../utils/export';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
 const store = useAppStore();
 
+const latestFuelPricePerLiter = computed<number | null>(() => {
+  const latestFuelRecord = store.state.records
+    .filter((record): record is FuelRecord => record.type === 'fuel')
+    .sort((a, b) => {
+      if (a.createdAtUnix === b.createdAtUnix) {
+        return b.createdAt.localeCompare(a.createdAt);
+      }
+      return b.createdAtUnix - a.createdAtUnix;
+    })[0];
+
+  return latestFuelRecord?.pricePerLiter ?? null;
+});
+
 const form = reactive({
-  averageFuelConsumptionPer100Km: String(store.state.config.defaultAverageFuelConsumptionPer100Km),
-  distanceKm: String(store.state.config.defaultDistanceKm),
+  averageFuelConsumptionPer100Km:
+    store.state.config.defaultAverageFuelConsumptionPer100Km === undefined
+      ? ''
+      : store.state.config.defaultAverageFuelConsumptionPer100Km.toFixed(2),
+  distanceKm: store.state.config.defaultDistanceKm === undefined ? '' : store.state.config.defaultDistanceKm.toFixed(2),
+  pricePerLiter: latestFuelPricePerLiter.value === null ? '' : latestFuelPricePerLiter.value.toFixed(2),
   startLocation: '',
   endLocation: '',
   note: store.state.config.defaultTripNote,
@@ -116,6 +147,18 @@ const form = reactive({
 
 const keyword = ref('');
 const submitFilter = ref<'all' | 'submitted' | 'pending'>('all');
+
+watch(
+  latestFuelPricePerLiter,
+  (value) => {
+    if (form.pricePerLiter.trim()) {
+      return;
+    }
+
+    form.pricePerLiter = value === null ? '' : value.toFixed(2);
+  },
+  { immediate: true },
+);
 
 const tripRecords = computed(() =>
   store.state.records
@@ -147,23 +190,42 @@ const filteredRecords = computed(() => {
   });
 });
 
-const consumedFuelPreview = computed(() => {
+const consumedFuelLitersValue = computed<number | null>(() => {
   const average = parsePositiveNumber(form.averageFuelConsumptionPer100Km);
   const distance = parsePositiveNumber(form.distanceKm);
 
   if (average === null || distance === null) {
+    return null;
+  }
+
+  return roundTo((distance / 100) * average, 3);
+});
+
+const consumedFuelPreview = computed(() => {
+  if (consumedFuelLitersValue.value === null) {
     return '--';
   }
 
-  return `${roundTo((distance / 100) * average, 3).toFixed(3)} L`;
+  return `${consumedFuelLitersValue.value.toFixed(3)} L`;
+});
+
+const tripFuelCostPreview = computed(() => {
+  const price = parsePositiveNumber(form.pricePerLiter);
+
+  if (consumedFuelLitersValue.value === null || price === null) {
+    return '--';
+  }
+
+  return `${roundTo(consumedFuelLitersValue.value * price, 2).toFixed(2)} 元`;
 });
 
 function saveTripRecord(): void {
   const average = parsePositiveNumber(form.averageFuelConsumptionPer100Km);
   const distance = parsePositiveNumber(form.distanceKm);
+  const price = parsePositiveNumber(form.pricePerLiter);
 
-  if (average === null || distance === null) {
-    store.showToast('请填写有效的正数：平均油耗和行驶距离。', 'error');
+  if (average === null || distance === null || price === null) {
+    store.showToast('请填写有效的正数：平均油耗、行驶距离、油价。', 'error');
     return;
   }
 
@@ -171,6 +233,7 @@ function saveTripRecord(): void {
     store.addTripRecord({
       averageFuelConsumptionPer100Km: average,
       distanceKm: distance,
+      pricePerLiter: price,
       startLocation: form.startLocation,
       endLocation: form.endLocation,
       note: form.note,
@@ -221,12 +284,25 @@ function exportTripCsv(): void {
 
   exportCsv(
     `trip-records-${Date.now()}.csv`,
-    ['createdAt', 'averageFuelConsumptionPer100Km', 'distanceKm', 'consumedFuelLiters', 'startLocation', 'endLocation', 'note', 'submittedToGithub'],
+    [
+      'createdAt',
+      'averageFuelConsumptionPer100Km',
+      'distanceKm',
+      'consumedFuelLiters',
+      'pricePerLiter',
+      'totalFuelCostCny',
+      'startLocation',
+      'endLocation',
+      'note',
+      'submittedToGithub',
+    ],
     filteredRecords.value.map((record) => [
       toLocalDateTime(record.createdAt),
       record.averageFuelConsumptionPer100Km.toFixed(2),
       record.distanceKm.toFixed(2),
       record.consumedFuelLiters.toFixed(3),
+      record.pricePerLiter?.toFixed(2) ?? '',
+      getTripFuelCost(record)?.toFixed(2) ?? '',
       record.startLocation ?? '',
       record.endLocation ?? '',
       record.note ?? '',
@@ -235,5 +311,35 @@ function exportTripCsv(): void {
   );
 
   store.showToast('已导出 CSV。', 'success');
+}
+
+function getTripFuelCost(record: TripRecord): number | null {
+  if (record.totalFuelCostCny !== undefined) {
+    return record.totalFuelCostCny;
+  }
+
+  if (record.pricePerLiter === undefined) {
+    return null;
+  }
+
+  return roundTo(record.consumedFuelLiters * record.pricePerLiter, 2);
+}
+
+function formatTripPrice(record: TripRecord): string {
+  if (record.pricePerLiter === undefined) {
+    return '--';
+  }
+
+  return `${record.pricePerLiter.toFixed(2)} 元/L`;
+}
+
+function formatTripCost(record: TripRecord): string {
+  const cost = getTripFuelCost(record);
+
+  if (cost === null) {
+    return '--';
+  }
+
+  return `${cost.toFixed(2)} 元`;
 }
 </script>

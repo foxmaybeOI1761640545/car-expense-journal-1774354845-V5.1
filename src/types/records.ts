@@ -24,6 +24,8 @@ export interface TripRecord extends BaseRecord {
   averageFuelConsumptionPer100Km: number;
   distanceKm: number;
   consumedFuelLiters: number;
+  pricePerLiter?: number;
+  totalFuelCostCny?: number;
   startLocation?: string;
   endLocation?: string;
 }

@@ -155,7 +155,7 @@ const store = useAppStore();
 const form = reactive({
   province: store.state.config.defaultProvince,
   fuelType: String(store.state.config.defaultFuelType),
-  pricePerLiter: String(store.state.config.defaultFuelPrice),
+  pricePerLiter: store.state.config.defaultFuelPrice === undefined ? '' : store.state.config.defaultFuelPrice.toFixed(2),
   fuelVolumeLiters: '',
   totalPriceCny: '',
   stationName: '',

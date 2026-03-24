@@ -24,6 +24,7 @@ interface FuelRecordInput {
 interface TripRecordInput {
   averageFuelConsumptionPer100Km: number;
   distanceKm: number;
+  pricePerLiter: number;
   startLocation?: string;
   endLocation?: string;
   note?: string;
@@ -112,10 +113,20 @@ function sanitizeRecord(raw: unknown): AppRecord | null {
   const average = parsePositiveNumber(record.averageFuelConsumptionPer100Km as number);
   const distance = parsePositiveNumber(record.distanceKm as number);
   const consumed = parsePositiveNumber(record.consumedFuelLiters as number);
+  const pricePerLiter = parsePositiveNumber(record.pricePerLiter as number);
+  const totalFuelCostCny = parsePositiveNumber(record.totalFuelCostCny as number);
 
   if (average === null || distance === null || consumed === null) {
     return null;
   }
+
+  const normalizedPricePerLiter = pricePerLiter === null ? undefined : roundTo(pricePerLiter, 2);
+  const normalizedTotalFuelCostCny =
+    totalFuelCostCny === null
+      ? normalizedPricePerLiter === undefined
+        ? undefined
+        : roundTo(roundTo(consumed, 3) * normalizedPricePerLiter, 2)
+      : roundTo(totalFuelCostCny, 2);
 
   const normalized: TripRecord = {
     id: record.id,
@@ -125,6 +136,8 @@ function sanitizeRecord(raw: unknown): AppRecord | null {
     averageFuelConsumptionPer100Km: roundTo(average, 2),
     distanceKm: roundTo(distance, 2),
     consumedFuelLiters: roundTo(consumed, 3),
+    pricePerLiter: normalizedPricePerLiter,
+    totalFuelCostCny: normalizedTotalFuelCostCny,
     startLocation: typeof record.startLocation === 'string' ? record.startLocation : undefined,
     endLocation: typeof record.endLocation === 'string' ? record.endLocation : undefined,
     note: typeof record.note === 'string' ? record.note : undefined,
@@ -251,12 +264,14 @@ function addFuelRecord(input: FuelRecordInput): FuelRecord {
 function addTripRecord(input: TripRecordInput): TripRecord {
   const average = parsePositiveNumber(input.averageFuelConsumptionPer100Km);
   const distance = parsePositiveNumber(input.distanceKm);
+  const price = parsePositiveNumber(input.pricePerLiter);
 
-  if (average === null || distance === null) {
+  if (average === null || distance === null || price === null) {
     throw new Error('油耗记录存在无效数值，请检查。');
   }
 
   const consumedFuelLiters = roundTo((distance / 100) * average, 3);
+  const totalFuelCostCny = roundTo(consumedFuelLiters * price, 2);
   const createdAtUnix = nowUnixSeconds();
 
   const record: TripRecord = {
@@ -267,6 +282,8 @@ function addTripRecord(input: TripRecordInput): TripRecord {
     averageFuelConsumptionPer100Km: roundTo(average, 2),
     distanceKm: roundTo(distance, 2),
     consumedFuelLiters,
+    pricePerLiter: roundTo(price, 2),
+    totalFuelCostCny,
     startLocation: input.startLocation?.trim() || undefined,
     endLocation: input.endLocation?.trim() || undefined,
     note: input.note?.trim() || undefined,

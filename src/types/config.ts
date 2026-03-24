@@ -3,9 +3,9 @@
   pageFavicon: string;
   defaultProvince: string;
   defaultFuelType: number;
-  defaultFuelPrice: number;
-  defaultAverageFuelConsumptionPer100Km: number;
-  defaultDistanceKm: number;
+  defaultFuelPrice?: number;
+  defaultAverageFuelConsumptionPer100Km?: number;
+  defaultDistanceKm?: number;
   defaultTripNote: string;
   defaultFuelNote: string;
   githubOwner: string;
@@ -21,9 +21,6 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   pageFavicon: 'favicon.svg',
   defaultProvince: '广东',
   defaultFuelType: 92,
-  defaultFuelPrice: 7.5,
-  defaultAverageFuelConsumptionPer100Km: 7.8,
-  defaultDistanceKm: 100,
   defaultTripNote: '',
   defaultFuelNote: '',
   githubOwner: 'foxmaybeOI1761640545',

@@ -97,16 +97,22 @@
             <input v-model.number="settings.defaultFuelType" type="number" min="1" step="1" />
           </label>
           <label>
-            默认油价(元/L)
-            <input v-model.number="settings.defaultFuelPrice" type="number" min="0.01" step="0.01" />
+            默认油价(元/L，可留空)
+            <input v-model.number="settings.defaultFuelPrice" type="number" min="0.01" step="0.01" placeholder="留空则不预填" />
           </label>
           <label>
-            默认平均油耗(L/100km)
-            <input v-model.number="settings.defaultAverageFuelConsumptionPer100Km" type="number" min="0.01" step="0.01" />
+            默认平均油耗(L/100km，可留空)
+            <input
+              v-model.number="settings.defaultAverageFuelConsumptionPer100Km"
+              type="number"
+              min="0.01"
+              step="0.01"
+              placeholder="留空则不预填"
+            />
           </label>
           <label>
-            默认行驶距离(km)
-            <input v-model.number="settings.defaultDistanceKm" type="number" min="0.01" step="0.01" />
+            默认行驶距离(km，可留空)
+            <input v-model.number="settings.defaultDistanceKm" type="number" min="0.01" step="0.01" placeholder="留空则不预填" />
           </label>
           <label>
             默认加油备注
@@ -156,7 +162,7 @@ import { useAppStore } from '../stores/appStore';
 import type { AppConfig } from '../types/config';
 import type { AppRecord } from '../types/records';
 import { toLocalDateTime } from '../utils/date';
-import { formatCurrency, formatNumber } from '../utils/number';
+import { formatCurrency, formatNumber, parsePositiveNumber, roundTo } from '../utils/number';
 
 const router = useRouter();
 const store = useAppStore();
@@ -204,12 +210,17 @@ watch(
 );
 
 function saveSettings(): void {
+  const defaultFuelPrice = parsePositiveNumber(settings.defaultFuelPrice);
+  const defaultAverageFuelConsumptionPer100Km = parsePositiveNumber(settings.defaultAverageFuelConsumptionPer100Km);
+  const defaultDistanceKm = parsePositiveNumber(settings.defaultDistanceKm);
+
   store.updateConfig({
     defaultProvince: settings.defaultProvince,
     defaultFuelType: Math.max(1, Math.round(Number(settings.defaultFuelType) || 92)),
-    defaultFuelPrice: Math.max(0.01, Number(settings.defaultFuelPrice) || 7.5),
-    defaultAverageFuelConsumptionPer100Km: Math.max(0.01, Number(settings.defaultAverageFuelConsumptionPer100Km) || 7.8),
-    defaultDistanceKm: Math.max(0.01, Number(settings.defaultDistanceKm) || 100),
+    defaultFuelPrice: defaultFuelPrice === null ? undefined : roundTo(defaultFuelPrice, 2),
+    defaultAverageFuelConsumptionPer100Km:
+      defaultAverageFuelConsumptionPer100Km === null ? undefined : roundTo(defaultAverageFuelConsumptionPer100Km, 2),
+    defaultDistanceKm: defaultDistanceKm === null ? undefined : roundTo(defaultDistanceKm, 2),
     defaultTripNote: settings.defaultTripNote,
     defaultFuelNote: settings.defaultFuelNote,
     githubOwner: settings.githubOwner.trim(),
