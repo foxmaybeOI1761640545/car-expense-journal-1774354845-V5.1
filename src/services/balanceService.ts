@@ -6,16 +6,14 @@ export function createEmptyFuelBalance(): FuelBalanceState {
   return {
     baselineEstablished: false,
     baselineAnchorUnix: null,
+    autoCalculatedFuelLiters: null,
+    manualOffsetLiters: 0,
     remainingFuelLiters: null,
     anomaly: false,
   };
 }
 
 export function recalculateFuelBalance(records: AppRecord[], current: FuelBalanceState): FuelBalanceState {
-  if (!current.baselineEstablished || current.baselineAnchorUnix === null) {
-    return createEmptyFuelBalance();
-  }
-
   const ordered = [...records].sort((a, b) => {
     if (a.createdAtUnix === b.createdAtUnix) {
       return a.createdAt.localeCompare(b.createdAt);
@@ -23,28 +21,31 @@ export function recalculateFuelBalance(records: AppRecord[], current: FuelBalanc
     return a.createdAtUnix - b.createdAtUnix;
   });
 
-  const scoped = ordered.filter((record) => record.createdAtUnix >= current.baselineAnchorUnix!);
-  const firstFuelIndex = scoped.findIndex((record) => record.type === 'fuel');
-
+  const firstFuelIndex = ordered.findIndex((record) => record.type === 'fuel');
   if (firstFuelIndex < 0) {
     return createEmptyFuelBalance();
   }
 
-  const firstFuel = scoped[firstFuelIndex] as FuelRecord;
-  let remaining = firstFuel.fuelVolumeLiters;
+  const firstFuel = ordered[firstFuelIndex] as FuelRecord;
+  let autoRemaining = firstFuel.fuelVolumeLiters;
 
-  for (let index = firstFuelIndex + 1; index < scoped.length; index += 1) {
-    const record = scoped[index];
+  for (let index = firstFuelIndex + 1; index < ordered.length; index += 1) {
+    const record = ordered[index];
     if (record.type === 'fuel') {
-      remaining += record.fuelVolumeLiters;
+      autoRemaining += record.fuelVolumeLiters;
     } else {
-      remaining -= record.consumedFuelLiters;
+      autoRemaining -= record.consumedFuelLiters;
     }
   }
+
+  const manualOffset = Number.isFinite(current.manualOffsetLiters) ? Number(current.manualOffsetLiters) : 0;
+  const remaining = autoRemaining + manualOffset;
 
   return {
     baselineEstablished: true,
     baselineAnchorUnix: firstFuel.createdAtUnix,
+    autoCalculatedFuelLiters: roundTo(autoRemaining, 3),
+    manualOffsetLiters: roundTo(manualOffset, 3),
     remainingFuelLiters: roundTo(remaining, 3),
     anomaly: remaining < 0,
   };

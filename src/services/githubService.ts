@@ -1,5 +1,6 @@
-﻿import type { AppConfig } from '../types/config';
+import type { AppConfig } from '../types/config';
 import type { AppRecord } from '../types/records';
+import type { FuelBalanceAdjustmentLog } from '../types/store';
 import { nowUnixSeconds } from '../utils/date';
 
 interface GithubSubmitResult {
@@ -20,7 +21,21 @@ interface GithubContentItem {
 interface GithubContentFileBody {
   content?: string;
   encoding?: string;
+  sha?: string;
 }
+
+interface FuelBalanceAdjustmentGithubEntry {
+  id: string;
+  recordedAt: string;
+  recordedAtUnix: number;
+  balanceChangedAt: string;
+  balanceChangedAtUnix: number;
+  remainingFuelLiters: number;
+  autoCalculatedFuelLiters: number;
+  manualOffsetLiters: number;
+}
+
+const FUEL_BALANCE_ADJUSTMENTS_FILE = 'fuel-balance-adjustments.json';
 
 function toBase64Utf8(value: string): string {
   const bytes = new TextEncoder().encode(value);
@@ -95,6 +110,65 @@ function normalizeRecordPayload(value: unknown): unknown[] {
   }
 
   return [];
+}
+
+function normalizeFuelBalanceAdjustmentPayload(value: unknown): FuelBalanceAdjustmentGithubEntry[] {
+  let candidates: unknown[] = [];
+
+  if (Array.isArray(value)) {
+    candidates = value;
+  } else if (value && typeof value === 'object') {
+    const maybeWithAdjustments = value as { adjustments?: unknown };
+    if (Array.isArray(maybeWithAdjustments.adjustments)) {
+      candidates = maybeWithAdjustments.adjustments;
+    }
+  }
+
+  return candidates
+    .map((item) => {
+      if (!item || typeof item !== 'object') {
+        return null;
+      }
+
+      const value = item as Partial<FuelBalanceAdjustmentGithubEntry>;
+      if (
+        typeof value.id !== 'string' ||
+        typeof value.recordedAt !== 'string' ||
+        !Number.isFinite(value.recordedAtUnix) ||
+        typeof value.balanceChangedAt !== 'string' ||
+        !Number.isFinite(value.balanceChangedAtUnix) ||
+        !Number.isFinite(value.remainingFuelLiters) ||
+        !Number.isFinite(value.autoCalculatedFuelLiters) ||
+        !Number.isFinite(value.manualOffsetLiters)
+      ) {
+        return null;
+      }
+
+      return {
+        id: value.id,
+        recordedAt: value.recordedAt,
+        recordedAtUnix: Number(value.recordedAtUnix),
+        balanceChangedAt: value.balanceChangedAt,
+        balanceChangedAtUnix: Number(value.balanceChangedAtUnix),
+        remainingFuelLiters: Number(value.remainingFuelLiters),
+        autoCalculatedFuelLiters: Number(value.autoCalculatedFuelLiters),
+        manualOffsetLiters: Number(value.manualOffsetLiters),
+      };
+    })
+    .filter((item): item is FuelBalanceAdjustmentGithubEntry => item !== null);
+}
+
+function toFuelBalanceAdjustmentGithubEntry(log: FuelBalanceAdjustmentLog): FuelBalanceAdjustmentGithubEntry {
+  return {
+    id: log.id,
+    recordedAt: log.recordedAt,
+    recordedAtUnix: log.recordedAtUnix,
+    balanceChangedAt: log.balanceChangedAt,
+    balanceChangedAtUnix: log.balanceChangedAtUnix,
+    remainingFuelLiters: log.remainingFuelLiters,
+    autoCalculatedFuelLiters: log.autoCalculatedFuelLiters,
+    manualOffsetLiters: log.manualOffsetLiters,
+  };
 }
 
 export async function submitRecordToGithub(record: AppRecord, config: AppConfig): Promise<GithubSubmitResult> {
@@ -173,7 +247,12 @@ export async function fetchRecordsFromGithub(config: AppConfig): Promise<unknown
   const items = Array.isArray(listBody) ? listBody : [listBody];
 
   const jsonFiles = items
-    .filter((item) => item.type === 'file' && item.name.toLowerCase().endsWith('.json'))
+    .filter(
+      (item) =>
+        item.type === 'file' &&
+        item.name.toLowerCase().endsWith('.json') &&
+        item.name.toLowerCase() !== FUEL_BALANCE_ADJUSTMENTS_FILE,
+    )
     .sort((a, b) => a.path.localeCompare(b.path));
 
   if (jsonFiles.length === 0) {
@@ -202,4 +281,91 @@ export async function fetchRecordsFromGithub(config: AppConfig): Promise<unknown
   }
 
   return records;
+}
+
+function getFuelBalanceAdjustmentsPath(config: AppConfig): string {
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  return `${recordsDir}/${FUEL_BALANCE_ADJUSTMENTS_FILE}`;
+}
+
+export async function appendFuelBalanceAdjustmentToGithub(
+  adjustment: FuelBalanceAdjustmentLog,
+  config: AppConfig,
+): Promise<GithubSubmitResult> {
+  validateGithubConfig(config);
+
+  const path = getFuelBalanceAdjustmentsPath(config);
+  const endpoint = makeGithubEndpoint(config, path);
+  const refQuery = makeRefQuery(config);
+  const headers = makeGithubHeaders(config.githubToken);
+
+  let sha: string | undefined;
+  let currentEntries: FuelBalanceAdjustmentGithubEntry[] = [];
+  const currentResponse = await fetch(`${endpoint}${refQuery}`, {
+    method: 'GET',
+    headers,
+  });
+
+  if (currentResponse.status === 404) {
+    currentEntries = [];
+  } else if (!currentResponse.ok) {
+    const body = (await currentResponse.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${currentResponse.status}`;
+    throw new Error(`GitHub 读取失败：${message}`);
+  } else {
+    const body = (await currentResponse.json()) as GithubContentFileBody;
+    sha = typeof body.sha === 'string' ? body.sha : undefined;
+
+    if (body.encoding !== 'base64' || typeof body.content !== 'string') {
+      throw new Error(`GitHub 文件格式不支持：${path}`);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fromBase64Utf8(body.content));
+    } catch {
+      throw new Error(`GitHub 文件不是有效 JSON：${path}`);
+    }
+
+    currentEntries = normalizeFuelBalanceAdjustmentPayload(parsed);
+  }
+
+  const payloadEntries = [...currentEntries, toFuelBalanceAdjustmentGithubEntry(adjustment)];
+  const payload: {
+    message: string;
+    content: string;
+    sha?: string;
+    branch?: string;
+  } = {
+    message: `chore(fuel-balance): append adjustment ${adjustment.recordedAtUnix}`,
+    content: toBase64Utf8(JSON.stringify(payloadEntries, null, 2)),
+  };
+
+  if (sha) {
+    payload.sha = sha;
+  }
+
+  const branch = config.githubBranch.trim();
+  if (branch) {
+    payload.branch = branch;
+  }
+
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${response.status}`;
+    throw new Error(`GitHub 提交失败：${message}`);
+  }
+
+  const data = (await response.json()) as { content?: { path?: string; sha?: string } };
+
+  return {
+    path: data.content?.path ?? path,
+    sha: data.content?.sha,
+  };
 }

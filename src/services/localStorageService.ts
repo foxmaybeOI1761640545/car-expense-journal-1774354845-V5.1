@@ -1,6 +1,6 @@
 ﻿import type { AppConfig } from '../types/config';
 import type { AppRecord } from '../types/records';
-import type { FuelBalanceState } from '../types/store';
+import type { FuelBalanceAdjustmentLog, FuelBalanceState } from '../types/store';
 
 const APP_DATA_KEY = 'car-journal-app-data-v1';
 const APP_CONFIG_KEY = 'car-journal-config-v1';
@@ -8,6 +8,7 @@ const APP_CONFIG_KEY = 'car-journal-config-v1';
 export interface PersistedAppData {
   records: AppRecord[];
   fuelBalance: FuelBalanceState;
+  fuelBalanceAdjustments: FuelBalanceAdjustmentLog[];
 }
 
 function safeParse<T>(raw: string | null): T | null {

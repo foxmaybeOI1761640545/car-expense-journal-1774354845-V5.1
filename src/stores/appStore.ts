@@ -1,12 +1,12 @@
-﻿import { reactive } from 'vue';
+import { reactive } from 'vue';
 import type { AppConfig } from '../types/config';
 import { DEFAULT_APP_CONFIG } from '../types/config';
 import type { AppRecord, FuelRecord, RecordType, TripRecord } from '../types/records';
-import type { AppStoreState, FuelBalanceState } from '../types/store';
+import type { AppStoreState, FuelBalanceAdjustmentLog, FuelBalanceState } from '../types/store';
 import { createEmptyFuelBalance, recalculateFuelBalance } from '../services/balanceService';
 import { applyBranding } from '../services/brandingService';
 import { loadConfigFile, resolveAppConfig } from '../services/configService';
-import { fetchRecordsFromGithub, submitRecordToGithub } from '../services/githubService';
+import { appendFuelBalanceAdjustmentToGithub, fetchRecordsFromGithub, submitRecordToGithub } from '../services/githubService';
 import { loadAppData, loadLocalConfig, saveAppData, saveLocalConfig } from '../services/localStorageService';
 import { nowIsoString, nowUnixSeconds } from '../utils/date';
 import { parsePositiveNumber, roundTo } from '../utils/number';
@@ -30,6 +30,17 @@ interface TripRecordInput {
   note?: string;
 }
 
+interface UpdateFuelBalanceInput {
+  remainingFuelLiters: number;
+  balanceChangedAtUnix?: number;
+}
+
+interface UpdateFuelBalanceResult {
+  submittedToGithub: boolean;
+  adjustment: FuelBalanceAdjustmentLog;
+  message?: string;
+}
+
 interface ImportRecordsResult {
   added: number;
   skipped: number;
@@ -43,6 +54,13 @@ interface BatchSubmitResult {
   failures: Array<{ recordId: string; message: string }>;
 }
 
+interface BatchFuelBalanceAdjustmentSubmitResult {
+  successCount: number;
+  failedCount: number;
+  successAdjustmentIds: string[];
+  failures: Array<{ adjustmentId: string; message: string }>;
+}
+
 interface SyncRecordsResult extends ImportRecordsResult {
   fetched: number;
 }
@@ -54,6 +72,7 @@ const state = reactive<AppStoreState>({
   config: { ...DEFAULT_APP_CONFIG },
   records: [],
   fuelBalance: createEmptyFuelBalance(),
+  fuelBalanceAdjustments: [],
   submittingRecordIds: [],
   toast: {
     visible: false,
@@ -70,10 +89,19 @@ function compareRecordsByTimeAsc(a: AppRecord, b: AppRecord): number {
   return a.createdAtUnix - b.createdAtUnix;
 }
 
+function compareFuelBalanceAdjustmentsByTimeAsc(a: FuelBalanceAdjustmentLog, b: FuelBalanceAdjustmentLog): number {
+  if (a.recordedAtUnix === b.recordedAtUnix) {
+    return a.recordedAt.localeCompare(b.recordedAt);
+  }
+
+  return a.recordedAtUnix - b.recordedAtUnix;
+}
+
 function persistState(): void {
   saveAppData({
     records: state.records,
     fuelBalance: state.fuelBalance,
+    fuelBalanceAdjustments: state.fuelBalanceAdjustments,
   });
 }
 
@@ -83,13 +111,61 @@ function sanitizeFuelBalance(raw: unknown): FuelBalanceState {
   }
 
   const value = raw as Partial<FuelBalanceState>;
+  const manualOffsetLiters = Number.isFinite(value.manualOffsetLiters) ? Number(value.manualOffsetLiters) : 0;
 
   return {
     baselineEstablished: Boolean(value.baselineEstablished),
     baselineAnchorUnix: Number.isFinite(value.baselineAnchorUnix) ? Number(value.baselineAnchorUnix) : null,
+    autoCalculatedFuelLiters: Number.isFinite(value.autoCalculatedFuelLiters) ? Number(value.autoCalculatedFuelLiters) : null,
+    manualOffsetLiters: roundTo(manualOffsetLiters, 3),
     remainingFuelLiters: Number.isFinite(value.remainingFuelLiters) ? Number(value.remainingFuelLiters) : null,
     anomaly: Boolean(value.anomaly),
   };
+}
+
+function sanitizeFuelBalanceAdjustment(raw: unknown): FuelBalanceAdjustmentLog | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw as Partial<FuelBalanceAdjustmentLog>;
+
+  if (
+    typeof value.id !== 'string' ||
+    typeof value.recordedAt !== 'string' ||
+    !Number.isFinite(value.recordedAtUnix) ||
+    typeof value.balanceChangedAt !== 'string' ||
+    !Number.isFinite(value.balanceChangedAtUnix) ||
+    !Number.isFinite(value.remainingFuelLiters) ||
+    !Number.isFinite(value.autoCalculatedFuelLiters) ||
+    !Number.isFinite(value.manualOffsetLiters)
+  ) {
+    return null;
+  }
+
+  return {
+    id: value.id,
+    recordedAt: value.recordedAt,
+    recordedAtUnix: Number(value.recordedAtUnix),
+    balanceChangedAt: value.balanceChangedAt,
+    balanceChangedAtUnix: Number(value.balanceChangedAtUnix),
+    remainingFuelLiters: roundTo(Number(value.remainingFuelLiters), 3),
+    autoCalculatedFuelLiters: roundTo(Number(value.autoCalculatedFuelLiters), 3),
+    manualOffsetLiters: roundTo(Number(value.manualOffsetLiters), 3),
+    submittedToGithub: Boolean(value.submittedToGithub),
+    githubPath: typeof value.githubPath === 'string' ? value.githubPath : undefined,
+  };
+}
+
+function sanitizeFuelBalanceAdjustments(raw: unknown): FuelBalanceAdjustmentLog[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw
+    .map((item) => sanitizeFuelBalanceAdjustment(item))
+    .filter((item): item is FuelBalanceAdjustmentLog => item !== null)
+    .sort(compareFuelBalanceAdjustmentsByTimeAsc);
 }
 
 function sanitizeRecord(raw: unknown): AppRecord | null {
@@ -229,12 +305,22 @@ function mergeRecords(records: AppRecord[]): { added: number; skipped: number } 
   return { added, skipped };
 }
 
-function makeRecordId(type: 'fuel' | 'trip'): string {
+function makeRecordId(type: 'fuel' | 'trip' | 'fuel-balance-adjustment'): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return `${type}-${crypto.randomUUID()}`;
   }
 
   return `${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function unixSecondsToIsoString(unixSeconds: number): string {
+  const date = new Date(unixSeconds * 1000);
+
+  if (Number.isNaN(date.getTime())) {
+    return nowIsoString();
+  }
+
+  return date.toISOString();
 }
 
 function recalculateAndPersist(): void {
@@ -271,6 +357,7 @@ export async function initializeStore(): Promise<void> {
   applyBranding(state.config);
   state.records = sanitizeRecords(persistedData.records);
   state.fuelBalance = sanitizeFuelBalance(persistedData.fuelBalance);
+  state.fuelBalanceAdjustments = sanitizeFuelBalanceAdjustments(persistedData.fuelBalanceAdjustments);
   state.fuelBalance = recalculateFuelBalance(state.records, state.fuelBalance);
   state.initialized = true;
 
@@ -313,16 +400,6 @@ function addFuelRecord(input: FuelRecordInput): FuelRecord {
   };
 
   state.records.push(record);
-
-  if (!state.fuelBalance.baselineEstablished || state.fuelBalance.baselineAnchorUnix === null) {
-    state.fuelBalance = {
-      baselineEstablished: true,
-      baselineAnchorUnix: createdAtUnix,
-      remainingFuelLiters: null,
-      anomaly: false,
-    };
-  }
-
   recalculateAndPersist();
   return record;
 }
@@ -373,8 +450,11 @@ function deleteRecord(recordId: string): void {
 }
 
 function resetFuelBaseline(): void {
-  state.fuelBalance = createEmptyFuelBalance();
-  persistState();
+  state.fuelBalance = {
+    ...state.fuelBalance,
+    manualOffsetLiters: 0,
+  };
+  recalculateAndPersist();
 }
 
 function isRecordSubmitting(recordId: string): boolean {
@@ -402,6 +482,109 @@ async function submitRecord(recordId: string): Promise<{ path: string; sha?: str
   } finally {
     state.submittingRecordIds = state.submittingRecordIds.filter((id) => id !== recordId);
   }
+}
+
+async function submitFuelBalanceAdjustment(adjustmentId: string): Promise<{ path: string; sha?: string }> {
+  const adjustment = state.fuelBalanceAdjustments.find((item) => item.id === adjustmentId);
+
+  if (!adjustment) {
+    throw new Error('油量变更日志不存在，无法提交。');
+  }
+
+  const result = await appendFuelBalanceAdjustmentToGithub(adjustment, state.config);
+  adjustment.submittedToGithub = true;
+  adjustment.githubPath = result.path;
+  persistState();
+  return result;
+}
+
+async function updateRemainingFuelLiters(input: UpdateFuelBalanceInput): Promise<UpdateFuelBalanceResult> {
+  const nextRemaining = Number(input.remainingFuelLiters);
+
+  if (!Number.isFinite(nextRemaining)) {
+    throw new Error('当前剩余油量必须是有效数字。');
+  }
+
+  const snapshotBalance = recalculateFuelBalance(state.records, state.fuelBalance);
+  if (!snapshotBalance.baselineEstablished || snapshotBalance.autoCalculatedFuelLiters === null) {
+    throw new Error('暂无加油记录，无法手动修改当前剩余油量。');
+  }
+
+  const normalizedRemaining = roundTo(nextRemaining, 3);
+  const autoCalculatedFuelLiters = snapshotBalance.autoCalculatedFuelLiters;
+  const manualOffsetLiters = roundTo(normalizedRemaining - autoCalculatedFuelLiters, 3);
+
+  const balanceChangedAtUnixRaw = Number.isFinite(input.balanceChangedAtUnix) ? Number(input.balanceChangedAtUnix) : nowUnixSeconds();
+  const balanceChangedAtUnix = Math.floor(balanceChangedAtUnixRaw);
+  const balanceChangedAt = unixSecondsToIsoString(balanceChangedAtUnix);
+  const recordedAtUnix = nowUnixSeconds();
+  const recordedAt = nowIsoString();
+
+  state.fuelBalance = {
+    ...snapshotBalance,
+    manualOffsetLiters,
+  };
+  state.fuelBalance = recalculateFuelBalance(state.records, state.fuelBalance);
+
+  const adjustment: FuelBalanceAdjustmentLog = {
+    id: makeRecordId('fuel-balance-adjustment'),
+    recordedAt,
+    recordedAtUnix,
+    balanceChangedAt,
+    balanceChangedAtUnix,
+    remainingFuelLiters: normalizedRemaining,
+    autoCalculatedFuelLiters,
+    manualOffsetLiters,
+    submittedToGithub: false,
+  };
+
+  state.fuelBalanceAdjustments.push(adjustment);
+  state.fuelBalanceAdjustments = [...state.fuelBalanceAdjustments].sort(compareFuelBalanceAdjustmentsByTimeAsc);
+  persistState();
+
+  try {
+    const result = await submitFuelBalanceAdjustment(adjustment.id);
+    return {
+      submittedToGithub: true,
+      adjustment,
+      message: result.path,
+    };
+  } catch (error) {
+    return {
+      submittedToGithub: false,
+      adjustment,
+      message: error instanceof Error ? error.message : '油量变更日志提交失败。',
+    };
+  }
+}
+
+function getPendingFuelBalanceAdjustmentIds(): string[] {
+  return state.fuelBalanceAdjustments.filter((item) => !item.submittedToGithub).map((item) => item.id);
+}
+
+async function syncPendingFuelBalanceAdjustments(): Promise<BatchFuelBalanceAdjustmentSubmitResult> {
+  const pendingIds = getPendingFuelBalanceAdjustmentIds();
+  const successAdjustmentIds: string[] = [];
+  const failures: Array<{ adjustmentId: string; message: string }> = [];
+
+  for (const adjustmentId of pendingIds) {
+    try {
+      await submitFuelBalanceAdjustment(adjustmentId);
+      successAdjustmentIds.push(adjustmentId);
+    } catch (error) {
+      failures.push({
+        adjustmentId,
+        message: error instanceof Error ? error.message : '提交失败。',
+      });
+    }
+  }
+
+  return {
+    successCount: successAdjustmentIds.length,
+    failedCount: failures.length,
+    successAdjustmentIds,
+    failures,
+  };
 }
 
 function importRecords(raw: unknown): ImportRecordsResult {
@@ -523,6 +706,9 @@ export function useAppStore() {
     addTripRecord,
     deleteRecord,
     resetFuelBaseline,
+    updateRemainingFuelLiters,
+    getPendingFuelBalanceAdjustmentIds,
+    syncPendingFuelBalanceAdjustments,
     importRecords,
     submitRecord,
     submitRecords,

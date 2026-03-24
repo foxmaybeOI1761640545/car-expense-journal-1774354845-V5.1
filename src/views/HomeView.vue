@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <main class="page page--home">
     <section class="welcome card">
       <div>
@@ -24,13 +24,43 @@
         <h2>剩余油量概览</h2>
         <p class="value">{{ remainingFuelText }}</p>
         <p class="muted">统计基准：{{ baselineText }}</p>
+        <p v-if="store.state.fuelBalance.autoCalculatedFuelLiters !== null" class="hint">
+          自动估算：{{ store.state.fuelBalance.autoCalculatedFuelLiters.toFixed(3) }} L · 手动修正：
+          {{ store.state.fuelBalance.manualOffsetLiters.toFixed(3) }} L
+        </p>
         <p v-if="store.state.fuelBalance.baselineEstablished" class="hint">
-          由于未记录初始剩余油量，当前剩余油量从首次加油记录开始估算。
+          当前剩余油量从首次加油记录起算，可手动修正；后续会继续按记录自动累计。
         </p>
         <p v-if="store.state.fuelBalance.anomaly" class="alert alert--error">
-          剩余油量已小于 0，说明统计基准可能不准确。
+          剩余油量已小于 0，这在首次建账时可能出现，必要时请手动修正。
         </p>
-        <button class="btn btn--ghost" @click="handleResetBaseline">重置统计基准</button>
+
+        <form class="fuel-balance-form" @submit.prevent="saveManualRemainingFuel">
+          <label>
+            手动设置当前剩余油量（L，可负数）
+            <input v-model.trim="manualRemainingFuelText" type="number" step="0.001" inputmode="decimal" placeholder="如：12.5 或 -8.3" />
+          </label>
+          <label>
+            油量变更时间（可选）
+            <input v-model="manualBalanceChangedAtText" type="datetime-local" />
+          </label>
+          <div class="inline-actions">
+            <button class="btn btn--primary" type="submit">保存剩余油量</button>
+            <button
+              class="btn btn--secondary"
+              type="button"
+              :disabled="isSyncingFuelBalanceAdjustments || pendingFuelBalanceAdjustmentCount === 0"
+              @click="syncPendingFuelBalanceAdjustments"
+            >
+              {{
+                isSyncingFuelBalanceAdjustments
+                  ? '同步中...'
+                  : `同步未提交油量日志（${pendingFuelBalanceAdjustmentCount}）`
+              }}
+            </button>
+            <button class="btn btn--ghost" type="button" @click="handleResetBaseline">清除手动修正</button>
+          </div>
+        </form>
       </article>
 
       <article class="card summary-card">
@@ -174,6 +204,9 @@ const router = useRouter();
 const store = useAppStore();
 const isSubmittingAll = ref(false);
 const isSyncingFromGithub = ref(false);
+const isSyncingFuelBalanceAdjustments = ref(false);
+const manualRemainingFuelText = ref('');
+const manualBalanceChangedAtText = ref('');
 
 const recordsRef = computed(() => store.state.records);
 const {
@@ -188,15 +221,18 @@ const {
 
 const recentThreeRecords = computed(() => sortedRecords.value.slice(0, 3));
 const pendingRecordCount = computed(() => store.state.records.filter((record) => !record.submittedToGithub).length);
+const pendingFuelBalanceAdjustmentCount = computed(
+  () => store.state.fuelBalanceAdjustments.filter((item) => !item.submittedToGithub).length,
+);
 
 const remainingFuelText = computed(() => {
   if (!store.state.fuelBalance.baselineEstablished || store.state.fuelBalance.remainingFuelLiters === null) {
-    return '当前剩余油量：未建立统计基准';
+    return '当前剩余油量：暂无加油记录';
   }
   return `当前剩余油量：${store.state.fuelBalance.remainingFuelLiters.toFixed(3)} L`;
 });
 
-const baselineText = computed(() => (store.state.fuelBalance.baselineEstablished ? '已建立' : '未建立'));
+const baselineText = computed(() => (store.state.fuelBalance.baselineEstablished ? '已建立（首次加油记录）' : '未建立（暂无加油记录）'));
 const configPriorityModeText = computed(() =>
   settings.preferConfigOverLocalStorage
     ? '当前模式：配置文件优先（已勾选）'
@@ -244,7 +280,83 @@ function saveSettings(): void {
 
 function handleResetBaseline(): void {
   store.resetFuelBaseline();
-  store.showToast('统计基准已重置，下次新增加油记录后重新开始估算。', 'info');
+  store.showToast('已清除手动修正，当前剩余油量恢复为自动估算值。', 'info');
+}
+
+function parseDateTimeLocalToUnix(value: string): number | undefined {
+  const text = value.trim();
+  if (!text) {
+    return undefined;
+  }
+
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return Math.floor(date.getTime() / 1000);
+}
+
+async function saveManualRemainingFuel(): Promise<void> {
+  const remaining = Number(manualRemainingFuelText.value);
+  if (!Number.isFinite(remaining)) {
+    store.showToast('请填写有效数字作为当前剩余油量。', 'error');
+    return;
+  }
+
+  if (manualBalanceChangedAtText.value.trim() && parseDateTimeLocalToUnix(manualBalanceChangedAtText.value) === undefined) {
+    store.showToast('油量变更时间格式无效，请重新填写。', 'error');
+    return;
+  }
+
+  try {
+    const result = await store.updateRemainingFuelLiters({
+      remainingFuelLiters: remaining,
+      balanceChangedAtUnix: parseDateTimeLocalToUnix(manualBalanceChangedAtText.value),
+    });
+
+    if (result.submittedToGithub) {
+      manualRemainingFuelText.value = '';
+      store.showToast(`剩余油量已更新，日志已写入 GitHub：${result.message ?? ''}`.trim(), 'success');
+      return;
+    }
+
+    store.showToast(`剩余油量已更新，但日志未提交到 GitHub：${result.message ?? '请稍后重试。'}`, 'info');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '保存剩余油量失败。', 'error');
+  }
+}
+
+async function syncPendingFuelBalanceAdjustments(): Promise<void> {
+  if (isSyncingFuelBalanceAdjustments.value) {
+    return;
+  }
+
+  if (pendingFuelBalanceAdjustmentCount.value === 0) {
+    store.showToast('没有待同步的油量变更日志。', 'info');
+    return;
+  }
+
+  isSyncingFuelBalanceAdjustments.value = true;
+
+  try {
+    const result = await store.syncPendingFuelBalanceAdjustments();
+
+    if (result.successCount > 0 && result.failedCount === 0) {
+      store.showToast(`油量变更日志同步成功，共 ${result.successCount} 条。`, 'success');
+      return;
+    }
+
+    if (result.successCount > 0) {
+      const firstFailure = result.failures[0]?.message ?? '部分日志同步失败。';
+      store.showToast(`油量变更日志同步完成：成功 ${result.successCount}，失败 ${result.failedCount}。${firstFailure}`, 'info');
+      return;
+    }
+
+    store.showToast(result.failures[0]?.message ?? '油量变更日志同步失败。', 'error');
+  } finally {
+    isSyncingFuelBalanceAdjustments.value = false;
+  }
 }
 
 function jumpToRecord(record: AppRecord): void {
