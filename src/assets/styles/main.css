@@ -366,6 +366,10 @@ p {
   text-align: center;
 }
 
+.welcome-title {
+  display: inline-block;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -973,6 +977,18 @@ select:focus {
   .quick-action-settings {
     display: inline-flex;
     justify-content: center;
+  }
+
+  .welcome-title--mobile-toggle,
+  .value--mobile-toggle {
+    cursor: pointer;
+  }
+
+  .welcome-title--mobile-toggle:focus-visible,
+  .value--mobile-toggle:focus-visible {
+    outline: 2px solid rgba(182, 92, 92, 0.3);
+    outline-offset: 4px;
+    border-radius: 8px;
   }
 
   .btn--large {

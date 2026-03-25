@@ -2,66 +2,98 @@
   <main class="page page--home">
     <section class="welcome card">
       <div>
-        <p class="eyebrow">出行手账</p>
-        <h1>用车记录本</h1>
-        <p class="subtitle">记录加油、耗油与车辆剩余油量估算</p>
+        <p v-if="!isMobile || !isWelcomeActionsCollapsed" class="eyebrow">出行手账</p>
+        <h1
+          class="welcome-title"
+          :class="{ 'welcome-title--mobile-toggle': isMobile }"
+          :role="isMobile ? 'button' : undefined"
+          :tabindex="isMobile ? 0 : undefined"
+          :aria-expanded="isMobile ? !isWelcomeActionsCollapsed : undefined"
+          @click="toggleWelcomeActions"
+          @keydown.enter.prevent="toggleWelcomeActions"
+          @keydown.space.prevent="toggleWelcomeActions"
+        >
+          用车记录本
+        </h1>
+        <p v-if="!isMobile || !isWelcomeActionsCollapsed" class="subtitle">记录加油、耗油与车辆剩余油量估算</p>
       </div>
       <div class="quick-actions">
         <button class="btn btn--primary btn--large" @click="router.push('/fuel')">加油记录</button>
         <button class="btn btn--secondary btn--large" @click="router.push('/trip')">耗油记录</button>
-        <button class="btn btn--secondary btn--large" :disabled="isSubmittingAll || !pendingRecordCount" @click="submitAllPendingRecords">
-          {{ isSubmittingAll ? '提交中...' : `一键提交未提交（${pendingRecordCount}）` }}
-        </button>
-        <button class="btn btn--ghost btn--large" :disabled="isSyncingFromGithub" @click="syncAllFromGithub">
-          {{ isSyncingFromGithub ? '拉取中...' : '一键拉取' }}
-        </button>
-        <button class="btn btn--ghost btn--large quick-action-settings" @click="router.push('/settings')">页面设置</button>
-        <button class="btn btn--ghost btn--large quick-action-guide" @click="router.push('/guide')">应用说明</button>
+        <template v-if="showWelcomeExtendedActions">
+          <button class="btn btn--secondary btn--large" :disabled="isSubmittingAll || !pendingRecordCount" @click="submitAllPendingRecords">
+            {{ isSubmittingAll ? '提交中...' : `一键提交未提交（${pendingRecordCount}）` }}
+          </button>
+          <button class="btn btn--ghost btn--large" :disabled="isSyncingFromGithub" @click="syncAllFromGithub">
+            {{ isSyncingFromGithub ? '拉取中...' : '一键拉取' }}
+          </button>
+          <button class="btn btn--ghost btn--large quick-action-settings" @click="router.push('/settings')">页面设置</button>
+          <button class="btn btn--ghost btn--large quick-action-guide" @click="router.push('/guide')">应用说明</button>
+        </template>
       </div>
     </section>
 
     <section class="dashboard-grid">
       <article class="card overview-card">
-        <h2>剩余油量概览</h2>
-        <p class="value">{{ remainingFuelText }}</p>
-        <p class="muted">统计基准：{{ baselineText }}</p>
-        <p v-if="store.state.fuelBalance.autoCalculatedFuelLiters !== null" class="hint">
-          自动估算：{{ store.state.fuelBalance.autoCalculatedFuelLiters.toFixed(3) }} L · 手动修正：
-          {{ store.state.fuelBalance.manualOffsetLiters.toFixed(3) }} L
+        <h2 v-if="!isMobile || !isOverviewCollapsed">剩余油量概览</h2>
+        <p
+          class="value"
+          :class="{ 'value--mobile-toggle': isMobile }"
+          :role="isMobile ? 'button' : undefined"
+          :tabindex="isMobile ? 0 : undefined"
+          :aria-expanded="isMobile ? !isOverviewCollapsed : undefined"
+          @click="toggleOverviewDetails"
+          @keydown.enter.prevent="toggleOverviewDetails"
+          @keydown.space.prevent="toggleOverviewDetails"
+        >
+          {{ remainingFuelText }}
         </p>
-        <p v-if="store.state.fuelBalance.baselineEstablished" class="hint">
-          当前剩余油量从首条加油记录起算，可手动修正；后续会继续按记录自动累计。
-        </p>
-        <p v-if="store.state.fuelBalance.anomaly" class="alert alert--error">
-          当前剩余油量已小于 0，首次建账时可能出现，必要时请手动修正。
-        </p>
+        <template v-if="showOverviewDetails">
+          <p class="muted">统计基准：{{ baselineText }}</p>
+          <p v-if="store.state.fuelBalance.autoCalculatedFuelLiters !== null" class="hint">
+            自动估算：{{ store.state.fuelBalance.autoCalculatedFuelLiters.toFixed(3) }} L · 手动修正：
+            {{ store.state.fuelBalance.manualOffsetLiters.toFixed(3) }} L
+          </p>
+          <p v-if="store.state.fuelBalance.baselineEstablished" class="hint">
+            当前剩余油量从首条加油记录起算，可手动修正；后续会继续按记录自动累计。
+          </p>
+          <p v-if="store.state.fuelBalance.anomaly" class="alert alert--error">
+            当前剩余油量已小于 0，首次建账时可能出现，必要时请手动修正。
+          </p>
 
-        <form class="fuel-balance-form" @submit.prevent="saveManualRemainingFuel">
-          <label>
-            手动设置当前剩余油量（L，可负数）
-            <input v-model.trim="manualRemainingFuelText" type="number" step="0.001" inputmode="decimal" placeholder="如：12.5 或 -8.3" />
-          </label>
-          <label>
-            油量变更时间（可选）
-            <input v-model="manualBalanceChangedAtText" type="datetime-local" />
-          </label>
-          <div class="inline-actions">
-            <button class="btn btn--primary" type="submit">保存剩余油量</button>
-            <button
-              class="btn btn--secondary"
-              type="button"
-              :disabled="isSyncingFuelBalanceAdjustments || pendingFuelBalanceAdjustmentCount === 0"
-              @click="syncPendingFuelBalanceAdjustments"
-            >
-              {{
-                isSyncingFuelBalanceAdjustments
-                  ? '同步中...'
-                  : `同步未提交油量日志（${pendingFuelBalanceAdjustmentCount}）`
-              }}
-            </button>
-            <button class="btn btn--ghost" type="button" @click="handleResetBaseline">清除手动修正</button>
-          </div>
-        </form>
+          <form class="fuel-balance-form" @submit.prevent="saveManualRemainingFuel">
+            <label>
+              手动设置当前剩余油量（L，可负数）
+              <input
+                v-model.trim="manualRemainingFuelText"
+                type="number"
+                step="0.001"
+                inputmode="decimal"
+                placeholder="如：12.5 或 -8.3"
+              />
+            </label>
+            <label>
+              油量变更时间（可选）
+              <input v-model="manualBalanceChangedAtText" type="datetime-local" />
+            </label>
+            <div class="inline-actions">
+              <button class="btn btn--primary" type="submit">保存剩余油量</button>
+              <button
+                class="btn btn--secondary"
+                type="button"
+                :disabled="isSyncingFuelBalanceAdjustments || pendingFuelBalanceAdjustmentCount === 0"
+                @click="syncPendingFuelBalanceAdjustments"
+              >
+                {{
+                  isSyncingFuelBalanceAdjustments
+                    ? '同步中...'
+                    : `同步未提交油量日志（${pendingFuelBalanceAdjustmentCount}）`
+                }}
+              </button>
+              <button class="btn btn--ghost" type="button" @click="handleResetBaseline">清除手动修正</button>
+            </div>
+          </form>
+        </template>
       </article>
 
       <article class="card summary-card">
@@ -216,7 +248,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useStatistics } from '../composables/useStatistics';
 import { useAppStore } from '../stores/appStore';
@@ -227,6 +259,7 @@ import { formatCurrency, formatNumber, parsePositiveNumber, roundTo } from '../u
 
 const router = useRouter();
 const store = useAppStore();
+const MOBILE_BREAKPOINT = 767;
 const isSubmittingAll = ref(false);
 const isSyncingFromGithub = ref(false);
 const isSyncingFuelBalanceAdjustments = ref(false);
@@ -236,6 +269,9 @@ const githubTokenInput = ref('');
 const clearGithubTokenOnSave = ref(false);
 const clearPatWhenClearingCache = ref(false);
 const isClearingLocalCache = ref(false);
+const isMobile = ref(false);
+const isWelcomeActionsCollapsed = ref(true);
+const isOverviewCollapsed = ref(true);
 
 const recordsRef = computed(() => store.state.records);
 const {
@@ -253,6 +289,8 @@ const pendingRecordCount = computed(() => store.state.records.filter((record) =>
 const pendingFuelBalanceAdjustmentCount = computed(
   () => store.state.fuelBalanceAdjustments.filter((item) => !item.submittedToGithub).length,
 );
+const showWelcomeExtendedActions = computed(() => !isMobile.value || !isWelcomeActionsCollapsed.value);
+const showOverviewDetails = computed(() => !isMobile.value || !isOverviewCollapsed.value);
 
 const remainingFuelText = computed(() => {
   if (!store.state.fuelBalance.baselineEstablished || store.state.fuelBalance.remainingFuelLiters === null) {
@@ -292,6 +330,35 @@ watch(
   },
   { immediate: true, deep: true },
 );
+
+onMounted(() => {
+  syncMobileState();
+  window.addEventListener('resize', syncMobileState);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', syncMobileState);
+});
+
+function syncMobileState(): void {
+  isMobile.value = window.innerWidth <= MOBILE_BREAKPOINT;
+}
+
+function toggleWelcomeActions(): void {
+  if (!isMobile.value) {
+    return;
+  }
+
+  isWelcomeActionsCollapsed.value = !isWelcomeActionsCollapsed.value;
+}
+
+function toggleOverviewDetails(): void {
+  if (!isMobile.value) {
+    return;
+  }
+
+  isOverviewCollapsed.value = !isOverviewCollapsed.value;
+}
 
 function saveSettings(): void {
   const defaultFuelPrice = parsePositiveNumber(settings.defaultFuelPrice);
