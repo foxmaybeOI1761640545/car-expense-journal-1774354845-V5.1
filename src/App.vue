@@ -14,6 +14,9 @@
       <RouterLink class="global-guide-link" to="/guide" aria-label="打开应用说明">
         <span class="global-guide-link__icon" aria-hidden="true">i</span>
       </RouterLink>
+      <RouterLink class="global-home-link" to="/" aria-label="返回首页">
+        <span class="global-home-link__icon" aria-hidden="true">⌂</span>
+      </RouterLink>
     </header>
     <RouterView />
     <AppToast
