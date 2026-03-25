@@ -1,9 +1,6 @@
 ﻿<template>
   <div class="app-shell">
     <header class="global-identity-bar">
-      <RouterLink class="global-guide-link" to="/guide" aria-label="打开应用说明">
-        <span class="global-guide-link__icon" aria-hidden="true">i</span>
-      </RouterLink>
       <RouterLink class="global-identity-link" to="/profile" aria-label="打开用户管理">
         <span :class="['global-identity-avatar', avatarShapeClass]">
           <img v-if="userAvatarDataUrl" :src="userAvatarDataUrl" alt="用户头像" />
@@ -13,6 +10,9 @@
           <strong>{{ userDisplayName }}</strong>
           <small>用户管理</small>
         </span>
+      </RouterLink>
+      <RouterLink class="global-guide-link" to="/guide" aria-label="打开应用说明">
+        <span class="global-guide-link__icon" aria-hidden="true">i</span>
       </RouterLink>
     </header>
     <RouterView />

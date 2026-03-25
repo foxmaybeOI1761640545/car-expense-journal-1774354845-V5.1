@@ -450,6 +450,7 @@ p {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 0 0 auto;
   color: inherit;
   text-decoration: none;
   border: 1px solid var(--color-border);
@@ -457,6 +458,10 @@ p {
   padding: 8px 12px;
   background: #fff8ec;
   min-height: 44px;
+}
+
+.home-link span:last-child {
+  white-space: nowrap;
 }
 
 .home-link:hover {
@@ -471,6 +476,7 @@ p {
 .page-header__content {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .record-layout {
@@ -819,10 +825,12 @@ select:focus {
 
   .global-guide-link {
     display: inline-flex;
+    margin-left: auto;
   }
 
   .global-identity-bar {
     margin-bottom: 10px;
+    justify-content: flex-start;
   }
 
   .welcome {
@@ -864,6 +872,12 @@ select:focus {
 
   .page-header {
     align-items: flex-start;
+  }
+
+  .home-link {
+    min-width: 132px;
+    justify-content: center;
+    padding: 8px 14px;
   }
 
   .list-header {
