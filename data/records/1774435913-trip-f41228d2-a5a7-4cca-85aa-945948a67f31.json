@@ -1,0 +1,17 @@
+{
+  "id": "trip-f41228d2-a5a7-4cca-85aa-945948a67f31",
+  "type": "trip",
+  "occurredAt": "2026-03-22T12:41:00.000Z",
+  "occurredAtUnix": 1774183260,
+  "createdAt": "2026-03-24T19:02:42.093Z",
+  "createdAtUnix": 1774378962,
+  "averageFuelConsumptionPer100Km": 10.2,
+  "distanceKm": 4.8,
+  "consumedFuelLiters": 0.49,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 3.75,
+  "startLocation": "闽能石化揭阳加油站",
+  "endLocation": "小区大门停车场",
+  "note": "20260322 20:41\n加油完回家",
+  "submittedToGithub": false
+}
