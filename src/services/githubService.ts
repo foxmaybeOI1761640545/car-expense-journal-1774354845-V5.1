@@ -36,7 +36,8 @@ interface FuelBalanceAdjustmentGithubEntry {
   manualOffsetLiters: number;
 }
 
-const FUEL_BALANCE_ADJUSTMENTS_FILE = 'fuel-balance-adjustments.json';
+const LEGACY_FUEL_BALANCE_ADJUSTMENTS_FILE = 'fuel-balance-adjustments.json';
+const FUEL_BALANCE_ADJUSTMENTS_DIR = 'fuel-balance-adjustments';
 
 function toBase64Utf8(value: string): string {
   const bytes = new TextEncoder().encode(value);
@@ -264,7 +265,7 @@ export async function fetchRecordsFromGithub(config: AppConfig, token: string): 
       (item) =>
         item.type === 'file' &&
         item.name.toLowerCase().endsWith('.json') &&
-        item.name.toLowerCase() !== FUEL_BALANCE_ADJUSTMENTS_FILE,
+        item.name.toLowerCase() !== LEGACY_FUEL_BALANCE_ADJUSTMENTS_FILE,
     )
     .sort((a, b) => a.path.localeCompare(b.path));
 
@@ -296,9 +297,9 @@ export async function fetchRecordsFromGithub(config: AppConfig, token: string): 
   return records;
 }
 
-function getFuelBalanceAdjustmentsPath(config: AppConfig): string {
+function getFuelBalanceAdjustmentPath(config: AppConfig, adjustment: FuelBalanceAdjustmentLog): string {
   const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
-  return `${recordsDir}/${FUEL_BALANCE_ADJUSTMENTS_FILE}`;
+  return `${recordsDir}/${FUEL_BALANCE_ADJUSTMENTS_DIR}/${adjustment.recordedAtUnix}-${adjustment.id}.json`;
 }
 
 export async function appendFuelBalanceAdjustmentToGithub(
@@ -308,7 +309,7 @@ export async function appendFuelBalanceAdjustmentToGithub(
 ): Promise<GithubSubmitResult> {
   validateGithubConfig(config, token);
 
-  const path = getFuelBalanceAdjustmentsPath(config);
+  const path = getFuelBalanceAdjustmentPath(config, adjustment);
   const endpoint = makeGithubEndpoint(config, path);
   const refQuery = makeRefQuery(config);
   const headers = makeGithubHeaders(token);

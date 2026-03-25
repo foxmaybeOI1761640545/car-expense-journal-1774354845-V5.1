@@ -89,6 +89,7 @@ interface RecalculateAndPersistOptions {
 }
 
 let toastTimer: number | null = null;
+const inFlightFuelBalanceAdjustmentSubmissions = new Map<string, Promise<{ path: string; sha?: string }>>();
 
 const state = reactive<AppStoreState>({
   initialized: false,
@@ -846,17 +847,32 @@ async function submitRecord(recordId: string): Promise<{ path: string; sha?: str
 }
 
 async function submitFuelBalanceAdjustment(adjustmentId: string): Promise<{ path: string; sha?: string }> {
-  const adjustment = state.fuelBalanceAdjustments.find((item) => item.id === adjustmentId);
-
-  if (!adjustment) {
-    throw new Error('油量变更日志不存在，无法提交。');
+  const existingTask = inFlightFuelBalanceAdjustmentSubmissions.get(adjustmentId);
+  if (existingTask) {
+    return existingTask;
   }
 
-  const result = await appendFuelBalanceAdjustmentToGithub(adjustment, state.config, state.githubToken);
-  adjustment.submittedToGithub = true;
-  adjustment.githubPath = result.path;
-  persistState();
-  return result;
+  const task = (async () => {
+    const adjustment = state.fuelBalanceAdjustments.find((item) => item.id === adjustmentId);
+
+    if (!adjustment) {
+      throw new Error('油量变更日志不存在，无法提交。');
+    }
+
+    const result = await appendFuelBalanceAdjustmentToGithub(adjustment, state.config, state.githubToken);
+    adjustment.submittedToGithub = true;
+    adjustment.githubPath = result.path;
+    persistState();
+    return result;
+  })();
+
+  inFlightFuelBalanceAdjustmentSubmissions.set(adjustmentId, task);
+
+  try {
+    return await task;
+  } finally {
+    inFlightFuelBalanceAdjustmentSubmissions.delete(adjustmentId);
+  }
 }
 
 async function updateRemainingFuelLiters(input: UpdateFuelBalanceInput): Promise<UpdateFuelBalanceResult> {

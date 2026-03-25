@@ -21,7 +21,7 @@
 - GitHub Token 独立本地存储（仅浏览器本地，转换后保存）
 - 默认配置文件初始化（`public/config/app-config.json`）
 - 前端直接调用 GitHub REST API（Repository Contents）提交记录 JSON（支持单条/批量）
-- 剩余油量每次变更（手动修正 / 记录引起的自动变化）都会写入独立日志文件 `fuel-balance-adjustments.json`（持续追加）
+- 剩余油量每次变更（手动修正 / 记录引起的自动变化）都会写入独立日志文件（每条日志单文件）到目录 `fuel-balance-adjustments/`
 - 支持从 GitHub 拉取历史 JSON 并合并到本地（自动去重）
 - 支持“业务发生时间”（加油/耗油时间）与“记录创建时间”分离；业务时间留空时自动回退到记录创建时间
 - 历史记录支持倒序展示、筛选、编辑、删除、导出 JSON/CSV
@@ -72,6 +72,7 @@ npm run preview
 Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and write` 权限。
 
 提示：Token 不会写入 `public/config/app-config.json`，也不会随页面设置配置一起导出。
+提示：PAT 在本地 Token Vault 保存一次后，后续保存设置时可留空，不需要重复输入。
 
 ## 默认配置文件修改
 
@@ -169,7 +170,7 @@ JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
 - 加油/油耗记录发生变更时（新增、删除、导入）：
   - 会同步重新计算剩余油量
   - 若剩余油量状态发生变化，会自动追加一条 `source=records` 日志
-  - 日志本地持久化，并自动尝试提交到 GitHub 独立文件：`<githubRecordsDir>/fuel-balance-adjustments.json`
+  - 日志本地持久化，并自动尝试提交到 GitHub 独立文件：`<githubRecordsDir>/fuel-balance-adjustments/<recordedAtUnix>-<adjustment.id>.json`
   - 若自动提交失败，可在首页点击“同步未提交油量日志”
 - 首页“清除手动修正”会将修正偏移量归零，恢复为纯自动估算值
 
