@@ -36,7 +36,7 @@
           </label>
         </div>
 
-        <p class="hint">图片会自动裁剪为 1:1 并导出为 512x512 PNG，再通过 PAT 上传到你的仓库。</p>
+        <p class="hint">当图片不是 1:1 时，可在裁剪框中手动缩放与拖动选区，再导出为 512x512 PNG。</p>
         <input ref="avatarInputRef" class="visually-hidden" type="file" accept="image/png,image/jpeg" @change="handleAvatarChange" />
       </article>
 
@@ -87,6 +87,38 @@
     </section>
 
     <Teleport to="body">
+      <div v-if="isAvatarCropperOpen" class="avatar-cropper" @click.self="cancelAvatarCrop">
+        <div class="avatar-cropper__dialog">
+          <h3>裁剪头像</h3>
+          <p class="hint">拖动图片选择区域，可通过滑块缩放，裁剪框固定为 1:1。</p>
+          <div
+            ref="cropperViewportRef"
+            class="avatar-cropper__viewport"
+            @pointerdown="beginCropDrag"
+            @pointermove="onCropDrag"
+            @pointerup="endCropDrag"
+            @pointercancel="endCropDrag"
+          >
+            <img :src="avatarCropper.sourceDataUrl" class="avatar-cropper__image" :style="avatarCropperImageStyle" alt="头像裁剪预览" draggable="false" />
+          </div>
+          <label class="avatar-cropper__zoom">
+            <span>缩放</span>
+            <input
+              v-model.number="avatarCropper.zoom"
+              type="range"
+              :min="avatarCropper.minZoom"
+              :max="avatarCropper.maxZoom"
+              step="0.01"
+              @input="handleCropZoomChange"
+            />
+          </label>
+          <div class="avatar-cropper__actions">
+            <button class="btn btn--ghost" type="button" @click="cancelAvatarCrop">取消</button>
+            <button class="btn btn--primary" type="button" @click="confirmAvatarCrop">确认裁剪</button>
+          </div>
+        </div>
+      </div>
+
       <div v-if="isAvatarPreviewOpen" class="avatar-lightbox" @click.self="closeAvatarPreview">
         <button class="btn btn--ghost avatar-lightbox__close" type="button" @click="closeAvatarPreview">关闭</button>
         <div :class="['avatar-lightbox__preview', form.avatarStyle === 'round' ? 'avatar-lightbox__preview--round' : 'avatar-lightbox__preview--square']">
@@ -98,18 +130,40 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import { useAppStore } from '../stores/appStore';
 import { toLocalDateTime } from '../utils/date';
 
 const AVATAR_CANVAS_SIZE = 512;
+const DEFAULT_CROPPER_VIEWPORT_SIZE = 320;
+const AVATAR_CROPPER_MAX_ZOOM = 4;
 
 const store = useAppStore();
 const avatarInputRef = ref<HTMLInputElement | null>(null);
+const cropperViewportRef = ref<HTMLElement | null>(null);
 const isSyncingToGithub = ref(false);
 const isPullingFromGithub = ref(false);
 const isAvatarPreviewOpen = ref(false);
+const isAvatarCropperOpen = ref(false);
+const cropperViewportSize = ref(DEFAULT_CROPPER_VIEWPORT_SIZE);
+const cropperLastZoom = ref(1);
+const cropperImageElement = ref<HTMLImageElement | null>(null);
+
+const avatarCropper = reactive({
+  sourceDataUrl: '',
+  naturalWidth: 0,
+  naturalHeight: 0,
+  zoom: 1,
+  minZoom: 1,
+  maxZoom: AVATAR_CROPPER_MAX_ZOOM,
+  offsetX: 0,
+  offsetY: 0,
+  dragging: false,
+  pointerId: null as number | null,
+  lastClientX: 0,
+  lastClientY: 0,
+});
 
 const form = reactive({
   displayName: store.state.userProfile.displayName,
@@ -144,7 +198,9 @@ watch(
   },
 );
 
-watch(isAvatarPreviewOpen, (isOpen) => {
+const isAvatarOverlayOpen = computed(() => isAvatarPreviewOpen.value || isAvatarCropperOpen.value);
+
+watch(isAvatarOverlayOpen, (isOpen) => {
   document.body.style.overflow = isOpen ? 'hidden' : '';
 });
 
@@ -152,6 +208,166 @@ const avatarFallbackText = computed(() => {
   const name = form.displayName.trim();
   return name ? name.slice(0, 1).toUpperCase() : 'U';
 });
+
+const avatarCropperBaseScale = computed(() => {
+  if (!avatarCropper.naturalWidth || !avatarCropper.naturalHeight) {
+    return 1;
+  }
+
+  return Math.max(cropperViewportSize.value / avatarCropper.naturalWidth, cropperViewportSize.value / avatarCropper.naturalHeight);
+});
+
+const avatarCropperRenderedWidth = computed(() => avatarCropper.naturalWidth * avatarCropperBaseScale.value * avatarCropper.zoom);
+const avatarCropperRenderedHeight = computed(() => avatarCropper.naturalHeight * avatarCropperBaseScale.value * avatarCropper.zoom);
+
+const avatarCropperImageStyle = computed(() => ({
+  width: `${avatarCropperRenderedWidth.value}px`,
+  height: `${avatarCropperRenderedHeight.value}px`,
+  transform: `translate(${avatarCropper.offsetX}px, ${avatarCropper.offsetY}px)`,
+}));
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getAvatarCropperOffsetLimits(): { minX: number; maxX: number; minY: number; maxY: number } {
+  const minX = Math.min(0, cropperViewportSize.value - avatarCropperRenderedWidth.value);
+  const minY = Math.min(0, cropperViewportSize.value - avatarCropperRenderedHeight.value);
+  return {
+    minX,
+    maxX: 0,
+    minY,
+    maxY: 0,
+  };
+}
+
+function clampAvatarCropperOffset(): void {
+  const { minX, maxX, minY, maxY } = getAvatarCropperOffsetLimits();
+  avatarCropper.offsetX = clampNumber(avatarCropper.offsetX, minX, maxX);
+  avatarCropper.offsetY = clampNumber(avatarCropper.offsetY, minY, maxY);
+}
+
+function centerAvatarCropper(): void {
+  avatarCropper.offsetX = (cropperViewportSize.value - avatarCropperRenderedWidth.value) / 2;
+  avatarCropper.offsetY = (cropperViewportSize.value - avatarCropperRenderedHeight.value) / 2;
+  clampAvatarCropperOffset();
+}
+
+function updateCropperViewportSize(): void {
+  const viewportWidth = cropperViewportRef.value?.clientWidth;
+  if (!viewportWidth) {
+    return;
+  }
+
+  cropperViewportSize.value = viewportWidth;
+  clampAvatarCropperOffset();
+}
+
+function handleCropperWindowResize(): void {
+  updateCropperViewportSize();
+}
+
+function applyAvatarCropperZoom(previousZoom: number, nextZoom: number): void {
+  const normalizedNextZoom = clampNumber(nextZoom, avatarCropper.minZoom, avatarCropper.maxZoom);
+  const baseScale = avatarCropperBaseScale.value;
+  if (baseScale <= 0) {
+    avatarCropper.zoom = normalizedNextZoom;
+    return;
+  }
+
+  const oldScale = baseScale * previousZoom;
+  const nextScale = baseScale * normalizedNextZoom;
+  if (oldScale <= 0 || nextScale <= 0) {
+    avatarCropper.zoom = normalizedNextZoom;
+    return;
+  }
+
+  const viewportCenterX = cropperViewportSize.value / 2;
+  const viewportCenterY = cropperViewportSize.value / 2;
+  const focusPointX = (viewportCenterX - avatarCropper.offsetX) / oldScale;
+  const focusPointY = (viewportCenterY - avatarCropper.offsetY) / oldScale;
+
+  avatarCropper.zoom = normalizedNextZoom;
+  avatarCropper.offsetX = viewportCenterX - focusPointX * nextScale;
+  avatarCropper.offsetY = viewportCenterY - focusPointY * nextScale;
+  clampAvatarCropperOffset();
+}
+
+function handleCropZoomChange(): void {
+  applyAvatarCropperZoom(cropperLastZoom.value, avatarCropper.zoom);
+  cropperLastZoom.value = avatarCropper.zoom;
+}
+
+function beginCropDrag(event: PointerEvent): void {
+  if (!isAvatarCropperOpen.value) {
+    return;
+  }
+
+  event.preventDefault();
+  avatarCropper.dragging = true;
+  avatarCropper.pointerId = event.pointerId;
+  avatarCropper.lastClientX = event.clientX;
+  avatarCropper.lastClientY = event.clientY;
+  (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+}
+
+function onCropDrag(event: PointerEvent): void {
+  if (!avatarCropper.dragging || avatarCropper.pointerId !== event.pointerId) {
+    return;
+  }
+
+  event.preventDefault();
+  avatarCropper.offsetX += event.clientX - avatarCropper.lastClientX;
+  avatarCropper.offsetY += event.clientY - avatarCropper.lastClientY;
+  avatarCropper.lastClientX = event.clientX;
+  avatarCropper.lastClientY = event.clientY;
+  clampAvatarCropperOffset();
+}
+
+function endCropDrag(event: PointerEvent): void {
+  if (!avatarCropper.dragging) {
+    return;
+  }
+
+  if (avatarCropper.pointerId !== null && avatarCropper.pointerId !== event.pointerId) {
+    return;
+  }
+
+  avatarCropper.dragging = false;
+  avatarCropper.pointerId = null;
+}
+
+function openAvatarCropper(dataUrl: string, image: HTMLImageElement): void {
+  closeAvatarCropper();
+  closeAvatarPreview();
+  avatarCropper.sourceDataUrl = dataUrl;
+  avatarCropper.naturalWidth = image.naturalWidth;
+  avatarCropper.naturalHeight = image.naturalHeight;
+  avatarCropper.minZoom = 1;
+  avatarCropper.maxZoom = AVATAR_CROPPER_MAX_ZOOM;
+  avatarCropper.zoom = 1;
+  cropperLastZoom.value = 1;
+  cropperImageElement.value = image;
+  isAvatarCropperOpen.value = true;
+
+  nextTick(() => {
+    updateCropperViewportSize();
+    centerAvatarCropper();
+    window.addEventListener('resize', handleCropperWindowResize);
+  });
+}
+
+function closeAvatarCropper(): void {
+  isAvatarCropperOpen.value = false;
+  avatarCropper.dragging = false;
+  avatarCropper.pointerId = null;
+  window.removeEventListener('resize', handleCropperWindowResize);
+}
+
+function cancelAvatarCrop(): void {
+  closeAvatarCropper();
+  cropperImageElement.value = null;
+}
 
 function saveLocalProfile(showToast = true): void {
   store.updateUserProfile({
@@ -178,7 +394,7 @@ function openAvatarPicker(): void {
 }
 
 function openAvatarPreview(): void {
-  if (!form.avatarDataUrl) {
+  if (!form.avatarDataUrl || isAvatarCropperOpen.value) {
     return;
   }
 
@@ -192,12 +408,22 @@ function closeAvatarPreview(): void {
 function clearAvatar(): void {
   form.avatarDataUrl = '';
   closeAvatarPreview();
+  cancelAvatarCrop();
   store.clearUserProfileAvatar();
   store.showToast('头像已清除。', 'info');
 }
 
 function handleGlobalKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && isAvatarPreviewOpen.value) {
+  if (event.key !== 'Escape') {
+    return;
+  }
+
+  if (isAvatarCropperOpen.value) {
+    cancelAvatarCrop();
+    return;
+  }
+
+  if (isAvatarPreviewOpen.value) {
     closeAvatarPreview();
   }
 }
@@ -208,6 +434,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', handleGlobalKeydown);
+  window.removeEventListener('resize', handleCropperWindowResize);
   document.body.style.overflow = '';
 });
 
@@ -236,13 +463,7 @@ async function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> 
   });
 }
 
-async function cropAvatarToSquare(file: File): Promise<string> {
-  const dataUrl = await readFileAsDataUrl(file);
-  const image = await loadImageFromDataUrl(dataUrl);
-  const side = Math.min(image.naturalWidth, image.naturalHeight);
-  const offsetX = Math.floor((image.naturalWidth - side) / 2);
-  const offsetY = Math.floor((image.naturalHeight - side) / 2);
-
+function renderAvatarFromCrop(image: HTMLImageElement, sourceX: number, sourceY: number, sourceSize: number): string {
   const canvas = document.createElement('canvas');
   canvas.width = AVATAR_CANVAS_SIZE;
   canvas.height = AVATAR_CANVAS_SIZE;
@@ -253,8 +474,39 @@ async function cropAvatarToSquare(file: File): Promise<string> {
   }
 
   context.clearRect(0, 0, AVATAR_CANVAS_SIZE, AVATAR_CANVAS_SIZE);
-  context.drawImage(image, offsetX, offsetY, side, side, 0, 0, AVATAR_CANVAS_SIZE, AVATAR_CANVAS_SIZE);
+  context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, AVATAR_CANVAS_SIZE, AVATAR_CANVAS_SIZE);
   return canvas.toDataURL('image/png');
+}
+
+function applyAvatarDataUrl(avatarDataUrl: string): void {
+  form.avatarDataUrl = avatarDataUrl;
+  store.setUserProfileAvatar(avatarDataUrl);
+}
+
+function confirmAvatarCrop(): void {
+  const image = cropperImageElement.value;
+  if (!image) {
+    return;
+  }
+
+  try {
+    const cropScale = avatarCropperBaseScale.value * avatarCropper.zoom;
+    if (cropScale <= 0) {
+      throw new Error('头像裁剪比例无效');
+    }
+
+    const sourceSize = cropperViewportSize.value / cropScale;
+    const maxSourceX = Math.max(image.naturalWidth - sourceSize, 0);
+    const maxSourceY = Math.max(image.naturalHeight - sourceSize, 0);
+    const sourceX = clampNumber(-avatarCropper.offsetX / cropScale, 0, maxSourceX);
+    const sourceY = clampNumber(-avatarCropper.offsetY / cropScale, 0, maxSourceY);
+    const processedAvatarDataUrl = renderAvatarFromCrop(image, sourceX, sourceY, sourceSize);
+    applyAvatarDataUrl(processedAvatarDataUrl);
+    cancelAvatarCrop();
+    store.showToast('头像已裁剪为 1:1 并保存到本地。', 'success');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '头像裁剪失败。', 'error');
+  }
 }
 
 async function handleAvatarChange(event: Event): Promise<void> {
@@ -266,10 +518,18 @@ async function handleAvatarChange(event: Event): Promise<void> {
   }
 
   try {
-    const processedAvatarDataUrl = await cropAvatarToSquare(file);
-    form.avatarDataUrl = processedAvatarDataUrl;
-    store.setUserProfileAvatar(processedAvatarDataUrl);
-    store.showToast('头像已处理为 1:1 并保存到本地。', 'success');
+    const dataUrl = await readFileAsDataUrl(file);
+    const image = await loadImageFromDataUrl(dataUrl);
+
+    if (image.naturalWidth === image.naturalHeight) {
+      const processedAvatarDataUrl = renderAvatarFromCrop(image, 0, 0, image.naturalWidth);
+      applyAvatarDataUrl(processedAvatarDataUrl);
+      store.showToast('头像已处理为 1:1 并保存到本地。', 'success');
+      return;
+    }
+
+    openAvatarCropper(dataUrl, image);
+    store.showToast('请在 1:1 裁剪框中手动选择头像区域。', 'info');
   } catch (error) {
     store.showToast(error instanceof Error ? error.message : '头像处理失败。', 'error');
   } finally {

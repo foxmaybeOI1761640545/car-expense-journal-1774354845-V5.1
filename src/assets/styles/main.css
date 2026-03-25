@@ -603,6 +603,73 @@ p {
   gap: 16px;
 }
 
+.avatar-cropper {
+  position: fixed;
+  inset: 0;
+  z-index: 62;
+  background: rgba(45, 33, 28, 0.62);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+
+.avatar-cropper__dialog {
+  width: min(92vw, 540px);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background: var(--color-card-bg);
+  box-shadow: var(--shadow-card);
+  padding: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.avatar-cropper__viewport {
+  width: min(80vw, 320px);
+  aspect-ratio: 1 / 1;
+  margin: 0 auto;
+  border: 2px solid var(--color-secondary);
+  border-radius: 14px;
+  background: #fff9f1;
+  overflow: hidden;
+  position: relative;
+  touch-action: none;
+  cursor: grab;
+}
+
+.avatar-cropper__viewport:active {
+  cursor: grabbing;
+}
+
+.avatar-cropper__image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  user-select: none;
+  pointer-events: none;
+}
+
+.avatar-cropper__zoom {
+  display: grid;
+  gap: 6px;
+  font-size: 14px;
+}
+
+.avatar-cropper__zoom input {
+  width: 100%;
+}
+
+.avatar-cropper__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.avatar-cropper__actions .btn {
+  min-width: 104px;
+}
+
 .avatar-lightbox {
   position: fixed;
   inset: 0;
@@ -950,6 +1017,23 @@ select:focus {
 
   .avatar-lightbox__preview {
     width: min(90vw, 360px);
+  }
+
+  .avatar-cropper {
+    padding: 14px;
+  }
+
+  .avatar-cropper__viewport {
+    width: min(84vw, 300px);
+  }
+
+  .avatar-cropper__actions {
+    justify-content: stretch;
+  }
+
+  .avatar-cropper__actions .btn {
+    flex: 1;
+    min-width: 0;
   }
 }
 
