@@ -8,10 +8,11 @@
 
 ## 功能概览
 
-- 三页面 SPA（Vue Router）
+- 四页面 SPA（Vue Router）
   - 首页 `/#/`
   - 加油记录页 `/#/fuel`
   - 油耗记录页 `/#/trip`
+  - 用户管理页 `/#/profile`
   - 应用说明页 `/#/guide`
 - 本地存储（localStorage）
   - 记录数据
@@ -21,12 +22,15 @@
 - GitHub Token 独立本地存储（仅浏览器本地，转换后保存）
 - 默认配置文件初始化（`public/config/app-config.json`）
 - 前端直接调用 GitHub REST API（Repository Contents）提交记录 JSON（支持单条/批量）
+- 用户管理页支持个人信息维护、头像 1:1 裁剪（512x512 PNG）、方/圆样式切换
+- 处理后的头像与用户资料可通过 PAT 上传到用户仓库做私有管理
 - 剩余油量每次变更（手动修正 / 记录引起的自动变化）都会写入独立日志文件（每条日志单文件）到目录 `fuel-balance-adjustments/`
 - 支持从 GitHub 拉取历史 JSON 并合并到本地（自动去重）
 - 支持“业务发生时间”（加油/耗油时间）与“记录创建时间”分离；业务时间留空时自动回退到记录创建时间
 - 历史记录支持倒序展示、筛选、编辑、删除、导出 JSON/CSV
 - 油耗页支持导入 JSON、批量提交与 GitHub 历史拉取
 - 加油页与油耗页的一键提交/拉取按记录类型分开执行；首页提供全局一键提交/拉取
+- 用户管理页支持从 GitHub 拉取 `profile.json` 与头像文件回填本地
 - 响应式布局（桌面/平板/手机）
 
 ## 本地运行
@@ -133,6 +137,12 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
 同时保留 `occurredAt/occurredAtUnix`（业务发生时间）与 `createdAt/createdAtUnix`（记录创建时间）。
 
+### 用户资料同步（用户管理页）
+- 资料文件：`<githubRecordsDir>/user-profile/profile.json`
+- 头像文件：`<githubRecordsDir>/user-profile/avatars/avatar-<unix>.png`
+- 同步时会先处理头像为 1:1，再上传头像文件并写入资料 JSON 中的头像路径
+- 支持从 GitHub 拉取资料与头像并回填本地
+
 ## 路由页面结构
 
 - 首页 `/#/`
@@ -140,6 +150,10 @@ JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
   - 剩余油量与基准状态
   - 最近记录、累计统计
   - 快捷入口、全局一键提交/拉取、设置
+- 用户管理页 `/#/profile`
+  - 个人信息（昵称/邮箱/手机号/所在地/简介）
+  - 头像 1:1 中心裁剪（512x512）与圆形/方形展示
+  - 用户资料与头像同步到 GitHub，支持从 GitHub 拉取回填
 - 应用说明页 `/#/guide`
   - 配置来源与优先级说明
   - GitHub 提交配置建议
@@ -199,6 +213,7 @@ src/
     appStore.ts
   types/
     config.ts
+    profile.ts
     records.ts
     store.ts
   utils/
@@ -208,6 +223,7 @@ src/
   views/
     HomeView.vue
     FuelView.vue
+    ProfileView.vue
     TripView.vue
   App.vue
   main.ts

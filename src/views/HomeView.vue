@@ -15,6 +15,7 @@
         <button class="btn btn--ghost btn--large" :disabled="isSyncingFromGithub" @click="syncAllFromGithub">
           {{ isSyncingFromGithub ? '拉取中...' : '一键拉取' }}
         </button>
+        <button class="btn btn--ghost btn--large" @click="router.push('/profile')">用户管理</button>
         <button class="btn btn--ghost btn--large" @click="router.push('/guide')">应用说明</button>
       </div>
     </section>

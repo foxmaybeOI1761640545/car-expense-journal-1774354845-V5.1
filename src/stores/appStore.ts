@@ -1,12 +1,21 @@
 import { reactive } from 'vue';
 import type { AppConfig } from '../types/config';
 import { DEFAULT_APP_CONFIG } from '../types/config';
+import { DEFAULT_USER_PROFILE, type AvatarStyle, type UserProfile } from '../types/profile';
 import type { AppRecord, FuelRecord, RecordType, TripRecord } from '../types/records';
 import type { AppStoreState, FuelBalanceAdjustmentLog, FuelBalanceState } from '../types/store';
 import { createEmptyFuelBalance, recalculateFuelBalance } from '../services/balanceService';
 import { applyBranding } from '../services/brandingService';
 import { loadConfigFile, resolveAppConfig } from '../services/configService';
-import { appendFuelBalanceAdjustmentToGithub, fetchRecordsFromGithub, submitRecordToGithub } from '../services/githubService';
+import {
+  appendFuelBalanceAdjustmentToGithub,
+  fetchRecordsFromGithub,
+  fetchUserAvatarDataUrlFromGithub,
+  fetchUserProfileFromGithub,
+  submitRecordToGithub,
+  submitUserProfileToGithub,
+  uploadUserAvatarToGithub,
+} from '../services/githubService';
 import { clearGithubTokenFromVault, loadGithubTokenFromVault, saveGithubTokenToVault } from '../services/githubTokenVaultService';
 import {
   loadAppData,
@@ -81,6 +90,16 @@ interface SyncRecordsResult extends ImportRecordsResult {
   fetched: number;
 }
 
+interface SyncUserProfileToGithubResult {
+  profilePath: string;
+  avatarPath?: string;
+}
+
+interface SyncUserProfileFromGithubResult {
+  exists: boolean;
+  avatarLoaded: boolean;
+}
+
 interface RecalculateAndPersistOptions {
   appendAdjustmentLog?: boolean;
   adjustmentSource?: 'manual' | 'records';
@@ -95,6 +114,7 @@ const state = reactive<AppStoreState>({
   initialized: false,
   config: { ...DEFAULT_APP_CONFIG },
   githubToken: '',
+  userProfile: { ...DEFAULT_USER_PROFILE },
   records: [],
   fuelBalance: createEmptyFuelBalance(),
   fuelBalanceAdjustments: [],
@@ -128,6 +148,7 @@ function compareFuelBalanceAdjustmentsByTimeAsc(a: FuelBalanceAdjustmentLog, b: 
 
 function persistState(): void {
   saveAppData({
+    userProfile: state.userProfile,
     records: state.records,
     fuelBalance: state.fuelBalance,
     fuelBalanceAdjustments: state.fuelBalanceAdjustments,
@@ -205,6 +226,53 @@ function sanitizeFuelBalanceAdjustments(raw: unknown): FuelBalanceAdjustmentLog[
     .map((item) => sanitizeFuelBalanceAdjustment(item))
     .filter((item): item is FuelBalanceAdjustmentLog => item !== null)
     .sort(compareFuelBalanceAdjustmentsByTimeAsc);
+}
+
+function parseAvatarMimeTypeFromDataUrl(dataUrl: string): string {
+  const match = /^data:([^;]+);base64,/i.exec(dataUrl.trim());
+  return match ? match[1].toLowerCase() : '';
+}
+
+function normalizeProfileText(value: unknown, maxLength: number): string {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim().slice(0, maxLength);
+}
+
+function normalizeOptionalProfileText(value: unknown, maxLength: number): string | undefined {
+  const normalized = normalizeProfileText(value, maxLength);
+  return normalized ? normalized : undefined;
+}
+
+function sanitizeUserProfile(raw: unknown): UserProfile {
+  if (!raw || typeof raw !== 'object') {
+    return { ...DEFAULT_USER_PROFILE };
+  }
+
+  const value = raw as Partial<UserProfile>;
+  const avatarDataUrl = normalizeProfileText(value.avatarDataUrl, 3_000_000);
+  const detectedAvatarMimeType = parseAvatarMimeTypeFromDataUrl(avatarDataUrl);
+  const avatarMimeType = detectedAvatarMimeType || normalizeProfileText(value.avatarMimeType, 64).toLowerCase();
+  const avatarStyle: AvatarStyle = value.avatarStyle === 'square' ? 'square' : 'round';
+  const avatarNeedsUpload = Boolean(value.avatarNeedsUpload) && Boolean(avatarDataUrl);
+
+  return {
+    displayName: normalizeProfileText(value.displayName, 80),
+    email: normalizeProfileText(value.email, 120),
+    phone: normalizeProfileText(value.phone, 40),
+    location: normalizeProfileText(value.location, 120),
+    bio: normalizeProfileText(value.bio, 1_000),
+    avatarStyle,
+    avatarDataUrl,
+    avatarMimeType,
+    avatarNeedsUpload,
+    avatarGithubPath: normalizeOptionalProfileText(value.avatarGithubPath, 320),
+    avatarUpdatedAt: normalizeOptionalProfileText(value.avatarUpdatedAt, 60),
+    profileGithubPath: normalizeOptionalProfileText(value.profileGithubPath, 320),
+    profileUpdatedAt: normalizeOptionalProfileText(value.profileUpdatedAt, 60),
+  };
 }
 
 function normalizeOccurredTime(input: {
@@ -516,6 +584,7 @@ export async function initializeStore(): Promise<void> {
   }
 
   applyBranding(state.config);
+  state.userProfile = sanitizeUserProfile(persistedData.userProfile);
   state.records = sanitizeRecords(persistedData.records);
   state.fuelBalance = sanitizeFuelBalance(persistedData.fuelBalance);
   state.fuelBalanceAdjustments = sanitizeFuelBalanceAdjustments(persistedData.fuelBalanceAdjustments);
@@ -549,6 +618,129 @@ function saveGithubToken(token: string): void {
 function normalizeOptionalText(value?: string): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function updateUserProfile(partial: Partial<UserProfile>): void {
+  state.userProfile = sanitizeUserProfile({
+    ...state.userProfile,
+    ...partial,
+  });
+  persistState();
+}
+
+function setUserProfileAvatar(avatarDataUrl: string): void {
+  state.userProfile = sanitizeUserProfile({
+    ...state.userProfile,
+    avatarDataUrl,
+    avatarNeedsUpload: true,
+  });
+  persistState();
+}
+
+function clearUserProfileAvatar(): void {
+  state.userProfile = sanitizeUserProfile({
+    ...state.userProfile,
+    avatarDataUrl: '',
+    avatarMimeType: '',
+    avatarGithubPath: undefined,
+    avatarUpdatedAt: undefined,
+    avatarNeedsUpload: true,
+  });
+  persistState();
+}
+
+async function syncUserProfileToGithub(): Promise<SyncUserProfileToGithubResult> {
+  const profileSnapshot = sanitizeUserProfile(state.userProfile);
+  const now = nowIsoString();
+
+  let avatarPath = profileSnapshot.avatarGithubPath;
+  let avatarUpdatedAt = profileSnapshot.avatarUpdatedAt;
+  let avatarMimeType = profileSnapshot.avatarMimeType;
+
+  if (profileSnapshot.avatarDataUrl) {
+    if (profileSnapshot.avatarNeedsUpload || !avatarPath) {
+      const avatarResult = await uploadUserAvatarToGithub(profileSnapshot.avatarDataUrl, state.config, state.githubToken);
+      avatarPath = avatarResult.path;
+      avatarUpdatedAt = now;
+      avatarMimeType = parseAvatarMimeTypeFromDataUrl(profileSnapshot.avatarDataUrl) || avatarMimeType;
+    }
+  } else {
+    avatarPath = undefined;
+    avatarUpdatedAt = undefined;
+    avatarMimeType = '';
+  }
+
+  const profilePayload = {
+    displayName: profileSnapshot.displayName,
+    email: normalizeOptionalText(profileSnapshot.email),
+    phone: normalizeOptionalText(profileSnapshot.phone),
+    location: normalizeOptionalText(profileSnapshot.location),
+    bio: normalizeOptionalText(profileSnapshot.bio),
+    avatarStyle: profileSnapshot.avatarStyle,
+    avatarPath,
+    avatarMimeType: normalizeOptionalText(avatarMimeType),
+    avatarUpdatedAt: normalizeOptionalText(avatarUpdatedAt),
+    updatedAt: now,
+  };
+
+  const profileResult = await submitUserProfileToGithub(profilePayload, state.config, state.githubToken);
+
+  state.userProfile = sanitizeUserProfile({
+    ...profileSnapshot,
+    avatarGithubPath: avatarPath,
+    avatarUpdatedAt,
+    avatarMimeType,
+    avatarNeedsUpload: false,
+    profileGithubPath: profileResult.path,
+    profileUpdatedAt: now,
+  });
+  persistState();
+
+  return {
+    profilePath: profileResult.path,
+    avatarPath,
+  };
+}
+
+async function syncUserProfileFromGithub(): Promise<SyncUserProfileFromGithubResult> {
+  const fetched = await fetchUserProfileFromGithub(state.config, state.githubToken);
+  if (!fetched) {
+    return {
+      exists: false,
+      avatarLoaded: false,
+    };
+  }
+
+  let avatarDataUrl = '';
+  let avatarLoaded = false;
+
+  if (fetched.profile.avatarPath) {
+    avatarDataUrl = await fetchUserAvatarDataUrlFromGithub(fetched.profile.avatarPath, state.config, state.githubToken);
+    avatarLoaded = true;
+  }
+
+  state.userProfile = sanitizeUserProfile({
+    ...state.userProfile,
+    displayName: fetched.profile.displayName,
+    email: fetched.profile.email ?? '',
+    phone: fetched.profile.phone ?? '',
+    location: fetched.profile.location ?? '',
+    bio: fetched.profile.bio ?? '',
+    avatarStyle: fetched.profile.avatarStyle,
+    avatarDataUrl,
+    avatarMimeType: fetched.profile.avatarMimeType ?? parseAvatarMimeTypeFromDataUrl(avatarDataUrl),
+    avatarGithubPath: fetched.profile.avatarPath,
+    avatarUpdatedAt: fetched.profile.avatarUpdatedAt,
+    avatarNeedsUpload: false,
+    profileGithubPath: fetched.path,
+    profileUpdatedAt: fetched.profile.updatedAt,
+  });
+  persistState();
+
+  return {
+    exists: true,
+    avatarLoaded,
+  };
 }
 
 function addFuelRecord(input: FuelRecordInput): FuelRecord {
@@ -1067,6 +1259,11 @@ export function useAppStore() {
     initializeStore,
     updateConfig,
     saveGithubToken,
+    updateUserProfile,
+    setUserProfileAvatar,
+    clearUserProfileAvatar,
+    syncUserProfileToGithub,
+    syncUserProfileFromGithub,
     addFuelRecord,
     addTripRecord,
     updateFuelRecord,

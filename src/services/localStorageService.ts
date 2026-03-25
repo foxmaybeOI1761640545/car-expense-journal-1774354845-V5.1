@@ -1,4 +1,5 @@
-﻿import type { AppConfig } from '../types/config';
+import type { AppConfig } from '../types/config';
+import type { UserProfile } from '../types/profile';
 import type { AppRecord } from '../types/records';
 import type { FuelBalanceAdjustmentLog, FuelBalanceState } from '../types/store';
 
@@ -10,6 +11,7 @@ interface LegacyLocalConfigWithToken extends Partial<AppConfig> {
 }
 
 export interface PersistedAppData {
+  userProfile: UserProfile;
   records: AppRecord[];
   fuelBalance: FuelBalanceState;
   fuelBalanceAdjustments: FuelBalanceAdjustmentLog[];

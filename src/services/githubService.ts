@@ -1,4 +1,5 @@
 import type { AppConfig } from '../types/config';
+import type { AvatarStyle } from '../types/profile';
 import type { AppRecord } from '../types/records';
 import type { FuelBalanceAdjustmentLog } from '../types/store';
 import { nowUnixSeconds } from '../utils/date';
@@ -38,6 +39,27 @@ interface FuelBalanceAdjustmentGithubEntry {
 
 const LEGACY_FUEL_BALANCE_ADJUSTMENTS_FILE = 'fuel-balance-adjustments.json';
 const FUEL_BALANCE_ADJUSTMENTS_DIR = 'fuel-balance-adjustments';
+const USER_PROFILE_DIR = 'user-profile';
+const USER_AVATAR_DIR = 'avatars';
+const USER_PROFILE_FILE = 'profile.json';
+
+export interface GithubUserProfilePayload {
+  displayName: string;
+  email?: string;
+  phone?: string;
+  location?: string;
+  bio?: string;
+  avatarStyle: AvatarStyle;
+  avatarPath?: string;
+  avatarMimeType?: string;
+  avatarUpdatedAt?: string;
+  updatedAt: string;
+}
+
+export interface GithubFetchedUserProfile {
+  path: string;
+  profile: GithubUserProfilePayload;
+}
 
 function toBase64Utf8(value: string): string {
   const bytes = new TextEncoder().encode(value);
@@ -94,6 +116,47 @@ function makeGithubEndpoint(config: AppConfig, path: string): string {
 function makeRefQuery(config: AppConfig): string {
   const branch = config.githubBranch.trim();
   return branch ? `?ref=${encodeURIComponent(branch)}` : '';
+}
+
+function makePutPayload(base: { message: string; content: string; sha?: string }, config: AppConfig): {
+  message: string;
+  content: string;
+  sha?: string;
+  branch?: string;
+} {
+  const payload: {
+    message: string;
+    content: string;
+    sha?: string;
+    branch?: string;
+  } = {
+    message: base.message,
+    content: base.content,
+  };
+
+  if (base.sha) {
+    payload.sha = base.sha;
+  }
+
+  const branch = config.githubBranch.trim();
+  if (branch) {
+    payload.branch = branch;
+  }
+
+  return payload;
+}
+
+function normalizeOptionalText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
+}
+
+function normalizeAvatarStyle(value: unknown): AvatarStyle {
+  return value === 'square' ? 'square' : 'round';
 }
 
 function normalizeRecordPayload(value: unknown): unknown[] {
@@ -251,6 +314,32 @@ async function fetchGithubJson<T>(endpoint: string, token: string): Promise<T> {
   return (await response.json()) as T;
 }
 
+async function fetchGithubFileBody(
+  config: AppConfig,
+  token: string,
+  path: string,
+  options: { allowNotFound?: boolean } = {},
+): Promise<GithubContentFileBody | null> {
+  const refQuery = makeRefQuery(config);
+  const endpoint = `${makeGithubEndpoint(config, path)}${refQuery}`;
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: makeGithubHeaders(token),
+  });
+
+  if (response.status === 404 && options.allowNotFound) {
+    return null;
+  }
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${response.status}`;
+    throw new Error(`GitHub 读取失败：${message}`);
+  }
+
+  return (await response.json()) as GithubContentFileBody;
+}
+
 export async function fetchRecordsFromGithub(config: AppConfig, token: string): Promise<unknown[]> {
   validateGithubConfig(config, token);
 
@@ -295,6 +384,180 @@ export async function fetchRecordsFromGithub(config: AppConfig, token: string): 
   }
 
   return records;
+}
+
+function getUserProfilePath(config: AppConfig): string {
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  return `${recordsDir}/${USER_PROFILE_DIR}/${USER_PROFILE_FILE}`;
+}
+
+function makeUserAvatarPath(config: AppConfig, extension: string, unixTime: number): string {
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  return `${recordsDir}/${USER_PROFILE_DIR}/${USER_AVATAR_DIR}/avatar-${unixTime}.${extension}`;
+}
+
+function normalizeDataUrlForGithubAvatar(dataUrl: string): { base64: string; extension: string } {
+  const normalized = dataUrl.trim();
+  const match = /^data:(image\/(?:png|jpeg));base64,([a-z0-9+/=\r\n]+)$/i.exec(normalized);
+
+  if (!match) {
+    throw new Error('头像格式无效，仅支持 PNG/JPEG 的 base64 Data URL');
+  }
+
+  const extension = match[1].toLowerCase() === 'image/png' ? 'png' : 'jpg';
+
+  return {
+    base64: match[2].replace(/[\r\n]/g, ''),
+    extension,
+  };
+}
+
+function normalizeUserProfilePayload(raw: unknown): GithubUserProfilePayload | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw as Partial<GithubUserProfilePayload>;
+  if (typeof value.displayName !== 'string' || typeof value.updatedAt !== 'string') {
+    return null;
+  }
+
+  return {
+    displayName: value.displayName.trim(),
+    email: normalizeOptionalText(value.email),
+    phone: normalizeOptionalText(value.phone),
+    location: normalizeOptionalText(value.location),
+    bio: normalizeOptionalText(value.bio),
+    avatarStyle: normalizeAvatarStyle(value.avatarStyle),
+    avatarPath: normalizeOptionalText(value.avatarPath),
+    avatarMimeType: normalizeOptionalText(value.avatarMimeType),
+    avatarUpdatedAt: normalizeOptionalText(value.avatarUpdatedAt),
+    updatedAt: value.updatedAt.trim(),
+  };
+}
+
+export async function uploadUserAvatarToGithub(dataUrl: string, config: AppConfig, token: string): Promise<GithubSubmitResult> {
+  validateGithubConfig(config, token);
+
+  const unixTime = nowUnixSeconds();
+  const avatar = normalizeDataUrlForGithubAvatar(dataUrl);
+  const path = makeUserAvatarPath(config, avatar.extension, unixTime);
+  const endpoint = makeGithubEndpoint(config, path);
+  const payload = makePutPayload(
+    {
+      message: `chore(profile): upload avatar ${unixTime}`,
+      content: avatar.base64,
+    },
+    config,
+  );
+
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: makeGithubHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${response.status}`;
+    throw new Error(`GitHub 提交失败：${message}`);
+  }
+
+  const data = (await response.json()) as { content?: { path?: string; sha?: string } };
+
+  return {
+    path: data.content?.path ?? path,
+    sha: data.content?.sha,
+  };
+}
+
+export async function submitUserProfileToGithub(
+  profile: GithubUserProfilePayload,
+  config: AppConfig,
+  token: string,
+): Promise<GithubSubmitResult> {
+  validateGithubConfig(config, token);
+
+  const path = getUserProfilePath(config);
+  const endpoint = makeGithubEndpoint(config, path);
+  const currentBody = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
+  const payload = makePutPayload(
+    {
+      message: `chore(profile): update user profile ${nowUnixSeconds()}`,
+      content: toBase64Utf8(JSON.stringify(profile, null, 2)),
+      sha: currentBody?.sha,
+    },
+    config,
+  );
+
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: makeGithubHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${response.status}`;
+    throw new Error(`GitHub 提交失败：${message}`);
+  }
+
+  const data = (await response.json()) as { content?: { path?: string; sha?: string } };
+  return {
+    path: data.content?.path ?? path,
+    sha: data.content?.sha,
+  };
+}
+
+export async function fetchUserProfileFromGithub(config: AppConfig, token: string): Promise<GithubFetchedUserProfile | null> {
+  validateGithubConfig(config, token);
+
+  const path = getUserProfilePath(config);
+  const body = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
+  if (!body) {
+    return null;
+  }
+
+  if (body.encoding !== 'base64' || typeof body.content !== 'string') {
+    throw new Error(`GitHub 鏂囦欢鏍煎紡涓嶆敮鎸侊細${path}`);
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(fromBase64Utf8(body.content));
+  } catch {
+    throw new Error(`GitHub 文件不是有效 JSON：${path}`);
+  }
+
+  const normalized = normalizeUserProfilePayload(parsed);
+  if (!normalized) {
+    throw new Error(`GitHub 用户资料格式无效：${path}`);
+  }
+
+  return {
+    path,
+    profile: normalized,
+  };
+}
+
+export async function fetchUserAvatarDataUrlFromGithub(avatarPath: string, config: AppConfig, token: string): Promise<string> {
+  validateGithubConfig(config, token);
+
+  const normalizedPath = avatarPath.trim();
+  if (!normalizedPath) {
+    throw new Error('头像路径不能为空');
+  }
+
+  const body = await fetchGithubFileBody(config, token, normalizedPath);
+  if (!body || body.encoding !== 'base64' || typeof body.content !== 'string') {
+    throw new Error(`GitHub 鏂囦欢鏍煎紡涓嶆敮鎸侊細${normalizedPath}`);
+  }
+
+  const lowerPath = normalizedPath.toLowerCase();
+  const mimeType = lowerPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+  const base64 = body.content.replace(/[\r\n]/g, '');
+  return `data:${mimeType};base64,${base64}`;
 }
 
 function getFuelBalanceAdjustmentPath(config: AppConfig, adjustment: FuelBalanceAdjustmentLog): string {

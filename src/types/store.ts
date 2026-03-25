@@ -1,4 +1,5 @@
-﻿import type { AppConfig } from './config';
+import type { AppConfig } from './config';
+import type { UserProfile } from './profile';
 import type { AppRecord } from './records';
 
 export interface FuelBalanceState {
@@ -34,6 +35,7 @@ export interface AppStoreState {
   initialized: boolean;
   config: AppConfig;
   githubToken: string;
+  userProfile: UserProfile;
   records: AppRecord[];
   fuelBalance: FuelBalanceState;
   fuelBalanceAdjustments: FuelBalanceAdjustmentLog[];

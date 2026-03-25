@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --color-primary: #b65c5c;
   --color-primary-hover: #a14f4f;
   --color-secondary: #d9b56d;
@@ -385,6 +385,63 @@ p {
   gap: 16px;
 }
 
+.profile-grid {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  gap: 16px;
+}
+
+.profile-avatar-card,
+.profile-form-card {
+  display: grid;
+  gap: 12px;
+}
+
+.avatar-panel {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+}
+
+.avatar-preview {
+  width: 180px;
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--color-border);
+  background: #fff9f1;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--color-text-subtle);
+  font-size: 36px;
+  font-weight: 700;
+}
+
+.avatar-preview--round {
+  border-radius: 50%;
+}
+
+.avatar-preview--square {
+  border-radius: 18px;
+}
+
+.avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatar-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.avatar-style-switch {
+  display: flex;
+  gap: 16px;
+}
+
 .guide-card {
   display: grid;
   gap: 10px;
@@ -592,6 +649,10 @@ select:focus {
   .guide-grid {
     grid-template-columns: 1fr;
   }
+
+  .profile-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 767px) {
@@ -651,3 +712,4 @@ select:focus {
     max-width: none;
   }
 }
+
