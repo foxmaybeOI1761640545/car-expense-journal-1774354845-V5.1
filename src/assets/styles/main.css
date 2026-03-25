@@ -52,6 +52,39 @@ select {
   margin: 0 auto 12px;
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+}
+
+.global-guide-link {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  text-decoration: none;
+  color: inherit;
+  background: rgba(255, 253, 249, 0.9);
+}
+
+.global-guide-link:hover {
+  border-color: var(--color-secondary);
+  background: #fff5e0;
+}
+
+.global-guide-link__icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  line-height: 1;
+  font-weight: 700;
 }
 
 .global-identity-link {
@@ -483,6 +516,23 @@ p {
   font-weight: 700;
 }
 
+.avatar-preview-trigger {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+}
+
+.avatar-preview-trigger:disabled {
+  cursor: default;
+}
+
+.avatar-preview-trigger:not(:disabled):focus-visible {
+  outline: 2px solid rgba(182, 92, 92, 0.3);
+  outline-offset: 6px;
+  border-radius: 20px;
+}
+
 .avatar-preview--round {
   border-radius: 50%;
 }
@@ -507,6 +557,46 @@ p {
 .avatar-style-switch {
   display: flex;
   gap: 16px;
+}
+
+.avatar-lightbox {
+  position: fixed;
+  inset: 0;
+  background: rgba(45, 33, 28, 0.62);
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  z-index: 60;
+}
+
+.avatar-lightbox__close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: #fffcf8;
+}
+
+.avatar-lightbox__preview {
+  width: min(78vw, 460px);
+  aspect-ratio: 1 / 1;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  background: #fff;
+  overflow: hidden;
+  box-shadow: 0 24px 50px rgba(0, 0, 0, 0.32);
+}
+
+.avatar-lightbox__preview--round {
+  border-radius: 50%;
+}
+
+.avatar-lightbox__preview--square {
+  border-radius: 24px;
+}
+
+.avatar-lightbox__preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .guide-card {
@@ -727,6 +817,10 @@ select:focus {
     padding: 12px;
   }
 
+  .global-guide-link {
+    display: inline-flex;
+  }
+
   .global-identity-bar {
     margin-bottom: 10px;
   }
@@ -738,6 +832,11 @@ select:focus {
 
   .quick-actions {
     flex-direction: column;
+  }
+
+  .quick-action-profile,
+  .quick-action-guide {
+    display: none;
   }
 
   .btn--large {
@@ -781,6 +880,14 @@ select:focus {
     left: 12px;
     right: 12px;
     max-width: none;
+  }
+
+  .avatar-lightbox {
+    padding: 16px;
+  }
+
+  .avatar-lightbox__preview {
+    width: min(90vw, 360px);
   }
 }
 

@@ -6,10 +6,18 @@
       <article class="card profile-avatar-card">
         <h2>头像设置</h2>
         <div class="avatar-panel">
-          <div :class="['avatar-preview', form.avatarStyle === 'round' ? 'avatar-preview--round' : 'avatar-preview--square']">
-            <img v-if="form.avatarDataUrl" :src="form.avatarDataUrl" alt="用户头像预览" />
-            <span v-else>{{ avatarFallbackText }}</span>
-          </div>
+          <button
+            class="avatar-preview-trigger"
+            type="button"
+            :disabled="!form.avatarDataUrl"
+            :aria-label="form.avatarDataUrl ? '放大预览头像' : '暂无头像可预览'"
+            @click="openAvatarPreview"
+          >
+            <div :class="['avatar-preview', form.avatarStyle === 'round' ? 'avatar-preview--round' : 'avatar-preview--square']">
+              <img v-if="form.avatarDataUrl" :src="form.avatarDataUrl" alt="用户头像预览" />
+              <span v-else>{{ avatarFallbackText }}</span>
+            </div>
+          </button>
 
           <div class="avatar-actions">
             <button class="btn btn--secondary" type="button" @click="openAvatarPicker">选择头像</button>
@@ -77,11 +85,20 @@
         </p>
       </article>
     </section>
+
+    <Teleport to="body">
+      <div v-if="isAvatarPreviewOpen" class="avatar-lightbox" @click.self="closeAvatarPreview">
+        <button class="btn btn--ghost avatar-lightbox__close" type="button" @click="closeAvatarPreview">关闭</button>
+        <div :class="['avatar-lightbox__preview', form.avatarStyle === 'round' ? 'avatar-lightbox__preview--round' : 'avatar-lightbox__preview--square']">
+          <img :src="form.avatarDataUrl" alt="头像放大预览" />
+        </div>
+      </div>
+    </Teleport>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import { useAppStore } from '../stores/appStore';
 import { toLocalDateTime } from '../utils/date';
@@ -92,6 +109,7 @@ const store = useAppStore();
 const avatarInputRef = ref<HTMLInputElement | null>(null);
 const isSyncingToGithub = ref(false);
 const isPullingFromGithub = ref(false);
+const isAvatarPreviewOpen = ref(false);
 
 const form = reactive({
   displayName: store.state.userProfile.displayName,
@@ -116,6 +134,19 @@ watch(
   },
   { deep: true },
 );
+
+watch(
+  () => form.avatarDataUrl,
+  (avatarDataUrl) => {
+    if (!avatarDataUrl) {
+      closeAvatarPreview();
+    }
+  },
+);
+
+watch(isAvatarPreviewOpen, (isOpen) => {
+  document.body.style.overflow = isOpen ? 'hidden' : '';
+});
 
 const avatarFallbackText = computed(() => {
   const name = form.displayName.trim();
@@ -146,11 +177,39 @@ function openAvatarPicker(): void {
   avatarInputRef.value?.click();
 }
 
+function openAvatarPreview(): void {
+  if (!form.avatarDataUrl) {
+    return;
+  }
+
+  isAvatarPreviewOpen.value = true;
+}
+
+function closeAvatarPreview(): void {
+  isAvatarPreviewOpen.value = false;
+}
+
 function clearAvatar(): void {
   form.avatarDataUrl = '';
+  closeAvatarPreview();
   store.clearUserProfileAvatar();
   store.showToast('头像已清除。', 'info');
 }
+
+function handleGlobalKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && isAvatarPreviewOpen.value) {
+    closeAvatarPreview();
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', handleGlobalKeydown);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown);
+  document.body.style.overflow = '';
+});
 
 async function readFileAsDataUrl(file: File): Promise<string> {
   return await new Promise((resolve, reject) => {

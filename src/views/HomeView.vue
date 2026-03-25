@@ -15,8 +15,8 @@
         <button class="btn btn--ghost btn--large" :disabled="isSyncingFromGithub" @click="syncAllFromGithub">
           {{ isSyncingFromGithub ? '拉取中...' : '一键拉取' }}
         </button>
-        <button class="btn btn--ghost btn--large" @click="router.push('/profile')">用户管理</button>
-        <button class="btn btn--ghost btn--large" @click="router.push('/guide')">应用说明</button>
+        <button class="btn btn--ghost btn--large quick-action-profile" @click="router.push('/profile')">用户管理</button>
+        <button class="btn btn--ghost btn--large quick-action-guide" @click="router.push('/guide')">应用说明</button>
       </div>
     </section>
 
@@ -204,7 +204,7 @@
           </label>
           <p class="hint full-width">{{ configPriorityEffectText }}</p>
           <p class="hint full-width">{{ githubTokenStatusText }}</p>
-          <button class="btn btn--primary" type="submit">保存设置</button>
+          <button class="btn btn--primary full-width" type="submit">保存设置</button>
           <button class="btn btn--danger full-width" type="button" :disabled="isClearingLocalCache" @click="clearLocalCache">
             {{ isClearingLocalCache ? '清空中...' : clearPatWhenClearingCache ? '清空本地缓存（含 PAT）' : '清空本地缓存（保留 PAT）' }}
           </button>
