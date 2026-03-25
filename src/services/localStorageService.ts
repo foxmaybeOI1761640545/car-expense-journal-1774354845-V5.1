@@ -38,6 +38,10 @@ export function saveAppData(data: PersistedAppData): void {
   localStorage.setItem(APP_DATA_KEY, JSON.stringify(data));
 }
 
+export function clearAppData(): void {
+  localStorage.removeItem(APP_DATA_KEY);
+}
+
 export function loadLocalConfig(): Partial<AppConfig> {
   const parsed = safeParse<Partial<AppConfig>>(localStorage.getItem(APP_CONFIG_KEY));
   return parsed ?? {};
@@ -45,6 +49,10 @@ export function loadLocalConfig(): Partial<AppConfig> {
 
 export function saveLocalConfig(config: AppConfig): void {
   localStorage.setItem(APP_CONFIG_KEY, JSON.stringify(config));
+}
+
+export function clearLocalConfig(): void {
+  localStorage.removeItem(APP_CONFIG_KEY);
 }
 
 export function loadLegacyGithubTokenFromLocalConfig(): string | null {

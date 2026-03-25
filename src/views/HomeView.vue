@@ -198,9 +198,17 @@
             <input v-model="settings.preferConfigOverLocalStorage" type="checkbox" />
             <span>{{ configPriorityModeText }}</span>
           </label>
+          <label class="checkbox-row full-width">
+            <input v-model="clearPatWhenClearingCache" type="checkbox" />
+            <span>清空缓存时同时清除本地 PAT</span>
+          </label>
           <p class="hint full-width">{{ configPriorityEffectText }}</p>
           <p class="hint full-width">{{ githubTokenStatusText }}</p>
           <button class="btn btn--primary" type="submit">保存设置</button>
+          <button class="btn btn--danger full-width" type="button" :disabled="isClearingLocalCache" @click="clearLocalCache">
+            {{ isClearingLocalCache ? '清空中...' : clearPatWhenClearingCache ? '清空本地缓存（含 PAT）' : '清空本地缓存（保留 PAT）' }}
+          </button>
+          <p class="hint full-width">会清空本地记录、油量日志、用户资料和页面设置。</p>
         </form>
       </article>
     </section>
@@ -226,6 +234,8 @@ const manualRemainingFuelText = ref('');
 const manualBalanceChangedAtText = ref('');
 const githubTokenInput = ref('');
 const clearGithubTokenOnSave = ref(false);
+const clearPatWhenClearingCache = ref(false);
+const isClearingLocalCache = ref(false);
 
 const recordsRef = computed(() => store.state.records);
 const {
@@ -318,6 +328,44 @@ function saveSettings(): void {
   }
 
   store.showToast(`设置已保存。${tokenMessage}`, 'success');
+}
+
+async function clearLocalCache(): Promise<void> {
+  if (isClearingLocalCache.value) {
+    return;
+  }
+
+  const message = clearPatWhenClearingCache.value
+    ? '确认清空本地缓存并清除本地 PAT 吗？此操作不可恢复。'
+    : '确认清空本地缓存吗？将保留本地 PAT。此操作不可恢复。';
+
+  if (!window.confirm(message)) {
+    return;
+  }
+
+  isClearingLocalCache.value = true;
+
+  try {
+    await store.clearLocalCache({
+      clearPat: clearPatWhenClearingCache.value,
+    });
+    githubTokenInput.value = '';
+    clearGithubTokenOnSave.value = false;
+    manualRemainingFuelText.value = '';
+    manualBalanceChangedAtText.value = '';
+
+    if (clearPatWhenClearingCache.value) {
+      clearPatWhenClearingCache.value = false;
+      store.showToast('本地缓存与 PAT 已清空。', 'success');
+      return;
+    }
+
+    store.showToast('本地缓存已清空，PAT 已保留。', 'success');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '清空本地缓存失败。', 'error');
+  } finally {
+    isClearingLocalCache.value = false;
+  }
 }
 
 function handleResetBaseline(): void {

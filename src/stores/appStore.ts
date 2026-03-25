@@ -18,6 +18,8 @@ import {
 } from '../services/githubService';
 import { clearGithubTokenFromVault, loadGithubTokenFromVault, saveGithubTokenToVault } from '../services/githubTokenVaultService';
 import {
+  clearAppData,
+  clearLocalConfig,
   loadAppData,
   loadLegacyGithubTokenFromLocalConfig,
   loadLocalConfig,
@@ -105,6 +107,10 @@ interface RecalculateAndPersistOptions {
   adjustmentSource?: 'manual' | 'records';
   balanceChangedAtUnix?: number;
   submitAdjustmentToGithub?: boolean;
+}
+
+interface ClearLocalCacheOptions {
+  clearPat?: boolean;
 }
 
 let toastTimer: number | null = null;
@@ -711,6 +717,32 @@ function saveGithubToken(token: string): void {
   }
 
   clearGithubTokenFromVault();
+}
+
+async function clearLocalCache(options: ClearLocalCacheOptions = {}): Promise<void> {
+  const clearPat = options.clearPat === true;
+  const fileConfig = await loadConfigFile();
+
+  clearAppData();
+  clearLocalConfig();
+
+  state.config = resolveAppConfig(fileConfig, {});
+  applyBranding(state.config);
+  state.userProfile = { ...DEFAULT_USER_PROFILE };
+  state.records = [];
+  state.fuelBalance = createEmptyFuelBalance();
+  state.fuelBalanceAdjustments = [];
+  state.submittingRecordIds = [];
+  state.toast.visible = false;
+
+  if (clearPat) {
+    clearGithubTokenFromVault();
+    state.githubToken = '';
+  } else {
+    state.githubToken = loadGithubTokenFromVault();
+  }
+
+  persistState();
 }
 
 function normalizeOptionalText(value?: string): string | undefined {
@@ -1379,6 +1411,7 @@ export function useAppStore() {
     initializeStore,
     updateConfig,
     saveGithubToken,
+    clearLocalCache,
     updateUserProfile,
     setUserProfileAvatar,
     clearUserProfileAvatar,

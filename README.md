@@ -20,6 +20,7 @@
   - 剩余油量手动变更日志
   - 页面设置（不含 GitHub Token）
 - GitHub Token 独立本地存储（仅浏览器本地，转换后保存）
+- 首页设置区支持一键清空本地缓存（记录/油量日志/用户资料/页面设置），默认保留 PAT，可选同时清除
 - 默认配置文件初始化（`public/config/app-config.json`）
 - 前端直接调用 GitHub REST API（Repository Contents）提交记录 JSON（支持单条/批量）
 - 用户管理页支持个人信息维护、头像 1:1 裁剪（512x512 PNG）、方/圆样式切换
