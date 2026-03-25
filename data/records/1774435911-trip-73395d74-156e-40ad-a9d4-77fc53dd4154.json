@@ -1,0 +1,17 @@
+{
+  "id": "trip-73395d74-156e-40ad-a9d4-77fc53dd4154",
+  "type": "trip",
+  "occurredAt": "2026-03-24T07:08:00.000Z",
+  "occurredAtUnix": 1774336080,
+  "createdAt": "2026-03-24T19:04:30.164Z",
+  "createdAtUnix": 1774379070,
+  "averageFuelConsumptionPer100Km": 9.7,
+  "distanceKm": 4.1,
+  "consumedFuelLiters": 0.398,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 3.05,
+  "startLocation": "小区大门停车场",
+  "endLocation": "星巴克（揭阳宝德）",
+  "note": "20260324 15:08\n去星巴克学习",
+  "submittedToGithub": false
+}
