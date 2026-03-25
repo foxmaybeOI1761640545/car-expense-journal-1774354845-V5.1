@@ -359,6 +359,16 @@ p {
   flex-wrap: wrap;
 }
 
+.quick-actions-manage {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.quick-action-settings {
+  display: none;
+}
+
 .dashboard-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -856,11 +866,11 @@ select:focus {
 
   .global-guide-link {
     display: inline-flex;
+    margin-left: auto;
   }
 
   .global-home-link {
     display: inline-flex;
-    margin-left: auto;
   }
 
   .global-identity-bar {
@@ -877,9 +887,22 @@ select:focus {
     flex-direction: column;
   }
 
-  .quick-action-profile,
   .quick-action-guide {
     display: none;
+  }
+
+  .quick-action-settings {
+    display: inline-flex;
+  }
+
+  .quick-actions-manage {
+    width: 100%;
+    gap: 8px;
+  }
+
+  .quick-actions-manage .btn--large {
+    min-width: 0;
+    flex: 1;
   }
 
   .btn--large {
@@ -910,6 +933,10 @@ select:focus {
   }
 
   .home-link {
+    display: none;
+  }
+
+  .settings-card--home {
     display: none;
   }
 

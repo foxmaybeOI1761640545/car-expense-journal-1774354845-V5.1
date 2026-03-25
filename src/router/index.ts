@@ -4,6 +4,7 @@ import FuelView from '../views/FuelView.vue';
 import TripView from '../views/TripView.vue';
 import GuideView from '../views/GuideView.vue';
 import ProfileView from '../views/ProfileView.vue';
+import SettingsView from '../views/SettingsView.vue';
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -32,6 +33,11 @@ const router = createRouter({
       path: '/profile',
       name: 'profile',
       component: ProfileView,
+    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: SettingsView,
     },
   ],
 });

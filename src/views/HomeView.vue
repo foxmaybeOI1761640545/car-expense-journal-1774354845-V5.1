@@ -15,7 +15,10 @@
         <button class="btn btn--ghost btn--large" :disabled="isSyncingFromGithub" @click="syncAllFromGithub">
           {{ isSyncingFromGithub ? '拉取中...' : '一键拉取' }}
         </button>
-        <button class="btn btn--ghost btn--large quick-action-profile" @click="router.push('/profile')">用户管理</button>
+        <div class="quick-actions-manage">
+          <button class="btn btn--ghost btn--large quick-action-profile" @click="router.push('/profile')">用户管理</button>
+          <button class="btn btn--ghost btn--large quick-action-settings" @click="router.push('/settings')">页面设置</button>
+        </div>
         <button class="btn btn--ghost btn--large quick-action-guide" @click="router.push('/guide')">应用说明</button>
       </div>
     </section>
@@ -127,7 +130,7 @@
         <p v-else class="muted">暂无记录</p>
       </article>
 
-      <article class="card settings-card">
+      <article class="card settings-card settings-card--home">
         <h2>页面设置</h2>
         <p class="muted">可修改默认值和 GitHub 配置，保存后写入 localStorage。配置文件路径：public/config/app-config.json。</p>
         <form class="settings-form" @submit.prevent="saveSettings">
