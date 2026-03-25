@@ -15,10 +15,7 @@
         <button class="btn btn--ghost btn--large" :disabled="isSyncingFromGithub" @click="syncAllFromGithub">
           {{ isSyncingFromGithub ? '拉取中...' : '一键拉取' }}
         </button>
-        <div class="quick-actions-manage">
-          <button class="btn btn--ghost btn--large quick-action-profile" @click="router.push('/profile')">用户管理</button>
-          <button class="btn btn--ghost btn--large quick-action-settings" @click="router.push('/settings')">页面设置</button>
-        </div>
+        <button class="btn btn--ghost btn--large quick-action-settings" @click="router.push('/settings')">页面设置</button>
         <button class="btn btn--ghost btn--large quick-action-guide" @click="router.push('/guide')">应用说明</button>
       </div>
     </section>

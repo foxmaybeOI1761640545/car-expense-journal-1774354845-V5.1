@@ -165,6 +165,8 @@ select {
 .global-identity-meta {
   display: grid;
   gap: 1px;
+  justify-items: center;
+  text-align: center;
 }
 
 .global-identity-meta strong {
@@ -359,14 +361,9 @@ p {
   flex-wrap: wrap;
 }
 
-.quick-actions-manage {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
 .quick-action-settings {
   display: none;
+  text-align: center;
 }
 
 .dashboard-grid {
@@ -893,16 +890,7 @@ select:focus {
 
   .quick-action-settings {
     display: inline-flex;
-  }
-
-  .quick-actions-manage {
-    width: 100%;
-    gap: 8px;
-  }
-
-  .quick-actions-manage .btn--large {
-    min-width: 0;
-    flex: 1;
+    justify-content: center;
   }
 
   .btn--large {
