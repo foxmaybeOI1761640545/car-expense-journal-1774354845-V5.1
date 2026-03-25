@@ -1,7 +1,7 @@
 ﻿<template>
   <div class="app-shell">
     <header class="global-identity-bar">
-      <RouterLink class="global-identity-link" to="/profile" aria-label="打开用户管理">
+      <RouterLink :class="['global-identity-link', { 'global-identity-link--named': hasLocalDisplayName }]" to="/profile" aria-label="打开用户管理">
         <span :class="['global-identity-avatar', avatarShapeClass]">
           <img v-if="userAvatarDataUrl" :src="userAvatarDataUrl" alt="用户头像" />
           <span v-else>{{ userInitial }}</span>
@@ -35,6 +35,7 @@ import { useAppStore } from './stores/appStore';
 
 const store = useAppStore();
 const toast = computed(() => store.state.toast);
+const hasLocalDisplayName = computed(() => store.state.userProfile.displayName.trim().length > 0);
 const userDisplayName = computed(() => {
   const value = store.state.userProfile.displayName.trim();
   return value || '未设置昵称';
