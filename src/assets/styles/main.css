@@ -104,15 +104,41 @@ p {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
+  min-width: 0;
+  flex-wrap: nowrap;
+}
+
+.route-point {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .route-arrow {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  line-height: 1;
-  transform: translateY(-0.02em);
+  flex: 0 0 16px;
+  width: 16px;
+  height: 10px;
+  position: relative;
+}
+
+.route-arrow::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 4px;
+  top: 4px;
+  border-top: 1.5px solid currentColor;
+}
+
+.route-arrow::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 1px;
+  width: 6px;
+  height: 6px;
+  border-top: 1.5px solid currentColor;
+  border-right: 1.5px solid currentColor;
+  transform: rotate(45deg);
 }
 
 .value {
@@ -475,6 +501,18 @@ select:focus {
   justify-content: space-between;
   align-items: center;
   gap: 10px;
+}
+
+.history-item__title {
+  display: grid;
+  gap: 2px;
+}
+
+.history-edit-panel {
+  border: 1px dashed var(--color-border);
+  border-radius: 12px;
+  background: #fffdf8;
+  padding: 10px;
 }
 
 .tag {

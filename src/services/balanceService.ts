@@ -15,10 +15,13 @@ export function createEmptyFuelBalance(): FuelBalanceState {
 
 export function recalculateFuelBalance(records: AppRecord[], current: FuelBalanceState): FuelBalanceState {
   const ordered = [...records].sort((a, b) => {
-    if (a.createdAtUnix === b.createdAtUnix) {
-      return a.createdAt.localeCompare(b.createdAt);
+    if (a.occurredAtUnix === b.occurredAtUnix) {
+      if (a.createdAtUnix === b.createdAtUnix) {
+        return a.createdAt.localeCompare(b.createdAt);
+      }
+      return a.createdAtUnix - b.createdAtUnix;
     }
-    return a.createdAtUnix - b.createdAtUnix;
+    return a.occurredAtUnix - b.occurredAtUnix;
   });
 
   const firstFuelIndex = ordered.findIndex((record) => record.type === 'fuel');
@@ -43,7 +46,7 @@ export function recalculateFuelBalance(records: AppRecord[], current: FuelBalanc
 
   return {
     baselineEstablished: true,
-    baselineAnchorUnix: firstFuel.createdAtUnix,
+    baselineAnchorUnix: firstFuel.occurredAtUnix,
     autoCalculatedFuelLiters: roundTo(autoRemaining, 3),
     manualOffsetLiters: roundTo(manualOffset, 3),
     remainingFuelLiters: roundTo(remaining, 3),

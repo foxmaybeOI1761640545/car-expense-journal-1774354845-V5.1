@@ -11,7 +11,6 @@
   githubOwner: string;
   githubRepo: string;
   githubBranch: string;
-  githubToken: string;
   githubRecordsDir: string;
   preferConfigOverLocalStorage: boolean;
 }
@@ -26,7 +25,6 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   githubOwner: 'foxmaybeOI1761640545',
   githubRepo: 'car-expense-journal-1774354845-V5.1',
   githubBranch: 'records/live-data',
-  githubToken: '',
   githubRecordsDir: 'data/records',
   preferConfigOverLocalStorage: false,
 };

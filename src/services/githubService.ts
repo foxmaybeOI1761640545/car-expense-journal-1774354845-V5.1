@@ -68,11 +68,11 @@ function encodeContentPath(path: string): string {
     .join('/');
 }
 
-function validateGithubConfig(config: AppConfig): void {
-  const requiredFields: Array<keyof AppConfig> = ['githubOwner', 'githubRepo', 'githubToken', 'githubRecordsDir'];
+function validateGithubConfig(config: AppConfig, token: string): void {
+  const requiredFields: Array<keyof AppConfig> = ['githubOwner', 'githubRepo', 'githubRecordsDir'];
   const missing = requiredFields.filter((field) => !String(config[field] ?? '').trim());
 
-  if (missing.length > 0) {
+  if (missing.length > 0 || !token.trim()) {
     throw new Error('GitHub 配置不完整，请先在首页设置 owner/repo/token/recordsDir。');
   }
 }
@@ -184,8 +184,8 @@ function toFuelBalanceAdjustmentGithubEntry(log: FuelBalanceAdjustmentLog): Fuel
   };
 }
 
-export async function submitRecordToGithub(record: AppRecord, config: AppConfig): Promise<GithubSubmitResult> {
-  validateGithubConfig(config);
+export async function submitRecordToGithub(record: AppRecord, config: AppConfig, token: string): Promise<GithubSubmitResult> {
+  validateGithubConfig(config, token);
 
   const unixTime = nowUnixSeconds();
   const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
@@ -208,7 +208,7 @@ export async function submitRecordToGithub(record: AppRecord, config: AppConfig)
 
   const response = await fetch(endpoint, {
     method: 'PUT',
-    headers: makeGithubHeaders(config.githubToken),
+    headers: makeGithubHeaders(token),
     body: JSON.stringify(payload),
   });
 
@@ -250,13 +250,13 @@ async function fetchGithubJson<T>(endpoint: string, token: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function fetchRecordsFromGithub(config: AppConfig): Promise<unknown[]> {
-  validateGithubConfig(config);
+export async function fetchRecordsFromGithub(config: AppConfig, token: string): Promise<unknown[]> {
+  validateGithubConfig(config, token);
 
   const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
   const refQuery = makeRefQuery(config);
   const listEndpoint = `${makeGithubEndpoint(config, recordsDir)}${refQuery}`;
-  const listBody = await fetchGithubJson<GithubContentItem[] | GithubContentItem>(listEndpoint, config.githubToken);
+  const listBody = await fetchGithubJson<GithubContentItem[] | GithubContentItem>(listEndpoint, token);
   const items = Array.isArray(listBody) ? listBody : [listBody];
 
   const jsonFiles = items
@@ -276,7 +276,7 @@ export async function fetchRecordsFromGithub(config: AppConfig): Promise<unknown
 
   for (const item of jsonFiles) {
     const fileEndpoint = `${makeGithubEndpoint(config, item.path)}${refQuery}`;
-    const fileBody = await fetchGithubJson<GithubContentFileBody>(fileEndpoint, config.githubToken);
+    const fileBody = await fetchGithubJson<GithubContentFileBody>(fileEndpoint, token);
 
     if (fileBody.encoding !== 'base64' || typeof fileBody.content !== 'string') {
       throw new Error(`GitHub 文件格式不支持：${item.path}`);
@@ -304,13 +304,14 @@ function getFuelBalanceAdjustmentsPath(config: AppConfig): string {
 export async function appendFuelBalanceAdjustmentToGithub(
   adjustment: FuelBalanceAdjustmentLog,
   config: AppConfig,
+  token: string,
 ): Promise<GithubSubmitResult> {
-  validateGithubConfig(config);
+  validateGithubConfig(config, token);
 
   const path = getFuelBalanceAdjustmentsPath(config);
   const endpoint = makeGithubEndpoint(config, path);
   const refQuery = makeRefQuery(config);
-  const headers = makeGithubHeaders(config.githubToken);
+  const headers = makeGithubHeaders(token);
 
   let sha: string | undefined;
   let currentEntries: FuelBalanceAdjustmentGithubEntry[] = [];

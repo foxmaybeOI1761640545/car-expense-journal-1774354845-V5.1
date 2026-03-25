@@ -3,6 +3,8 @@
 export interface BaseRecord {
   id: string;
   type: RecordType;
+  occurredAt: string;
+  occurredAtUnix: number;
   createdAt: string;
   createdAtUnix: number;
   note?: string;

@@ -29,10 +29,10 @@
           {{ store.state.fuelBalance.manualOffsetLiters.toFixed(3) }} L
         </p>
         <p v-if="store.state.fuelBalance.baselineEstablished" class="hint">
-          当前剩余油量从首次加油记录起算，可手动修正；后续会继续按记录自动累计。
+          当前剩余油量从首条加油记录起算，可手动修正；后续会继续按记录自动累计。
         </p>
         <p v-if="store.state.fuelBalance.anomaly" class="alert alert--error">
-          剩余油量已小于 0，这在首次建账时可能出现，必要时请手动修正。
+          当前剩余油量已小于 0，首次建账时可能出现，必要时请手动修正。
         </p>
 
         <form class="fuel-balance-form" @submit.prevent="saveManualRemainingFuel">
@@ -66,8 +66,9 @@
       <article class="card summary-card">
         <h2>最近一次加油</h2>
         <template v-if="latestFuelRecord">
-          <p>{{ toLocalDateTime(latestFuelRecord.createdAt) }}</p>
+          <p>{{ toLocalDateTime(latestFuelRecord.occurredAt) }}</p>
           <p>{{ latestFuelRecord.fuelVolumeLiters.toFixed(3) }} L · {{ latestFuelRecord.totalPriceCny.toFixed(2) }} 元</p>
+          <p class="muted">记录时间：{{ toLocalDateTime(latestFuelRecord.createdAt) }}</p>
           <p class="muted">{{ latestFuelRecord.stationName || latestFuelRecord.province || '未填写地点' }}</p>
         </template>
         <p v-else class="muted">暂无加油记录</p>
@@ -76,12 +77,13 @@
       <article class="card summary-card">
         <h2>最近一次油耗</h2>
         <template v-if="latestTripRecord">
-          <p>{{ toLocalDateTime(latestTripRecord.createdAt) }}</p>
+          <p>{{ toLocalDateTime(latestTripRecord.occurredAt) }}</p>
           <p>{{ latestTripRecord.distanceKm.toFixed(2) }} km · {{ latestTripRecord.consumedFuelLiters.toFixed(3) }} L</p>
+          <p class="muted">记录时间：{{ toLocalDateTime(latestTripRecord.createdAt) }}</p>
           <p class="muted route-text">
-            <span>{{ latestTripRecord.startLocation || '未填起点' }}</span>
-            <span class="route-arrow" aria-hidden="true">→</span>
-            <span>{{ latestTripRecord.endLocation || '未填终点' }}</span>
+            <span class="route-point">{{ latestTripRecord.startLocation || '未填起点' }}</span>
+            <span class="route-arrow" aria-hidden="true"></span>
+            <span class="route-point">{{ latestTripRecord.endLocation || '未填终点' }}</span>
           </p>
         </template>
         <p v-else class="muted">暂无油耗记录</p>
@@ -115,7 +117,7 @@
           <li v-for="record in recentThreeRecords" :key="record.id">
             <button class="link-like" @click="jumpToRecord(record)">
               <span>{{ record.type === 'fuel' ? '加油' : '油耗' }}</span>
-              <span>{{ toLocalDateTime(record.createdAt) }}</span>
+              <span>{{ toLocalDateTime(record.occurredAt) }}</span>
               <span v-if="record.type === 'fuel'">{{ record.fuelVolumeLiters.toFixed(3) }} L</span>
               <span v-else>{{ record.distanceKm.toFixed(2) }} km</span>
             </button>
@@ -175,18 +177,28 @@
             <input v-model="settings.githubBranch" type="text" placeholder="留空使用仓库默认分支" />
           </label>
           <label>
-            GitHub Token
-            <input v-model="settings.githubToken" type="password" placeholder="ghp_xxx" />
-          </label>
-          <label>
             Records 目录
             <input v-model="settings.githubRecordsDir" type="text" placeholder="data/records" />
+          </label>
+          <label>
+            GitHub Token（仅本浏览器保存）
+            <input
+              v-model="githubTokenInput"
+              type="password"
+              placeholder="留空不变；输入则更新本地 Token Vault"
+              autocomplete="new-password"
+            />
+          </label>
+          <label class="checkbox-row">
+            <input v-model="clearGithubTokenOnSave" type="checkbox" />
+            <span>保存时清空已存 Token</span>
           </label>
           <label class="checkbox-row">
             <input v-model="settings.preferConfigOverLocalStorage" type="checkbox" />
             <span>{{ configPriorityModeText }}</span>
           </label>
           <p class="hint full-width">{{ configPriorityEffectText }}</p>
+          <p class="hint full-width">{{ githubTokenStatusText }}</p>
           <button class="btn btn--primary" type="submit">保存设置</button>
         </form>
       </article>
@@ -201,7 +213,7 @@ import { useStatistics } from '../composables/useStatistics';
 import { useAppStore } from '../stores/appStore';
 import type { AppConfig } from '../types/config';
 import type { AppRecord } from '../types/records';
-import { toLocalDateTime } from '../utils/date';
+import { parseDateTimeLocalToUnix, toLocalDateTime } from '../utils/date';
 import { formatCurrency, formatNumber, parsePositiveNumber, roundTo } from '../utils/number';
 
 const router = useRouter();
@@ -211,6 +223,8 @@ const isSyncingFromGithub = ref(false);
 const isSyncingFuelBalanceAdjustments = ref(false);
 const manualRemainingFuelText = ref('');
 const manualBalanceChangedAtText = ref('');
+const githubTokenInput = ref('');
+const clearGithubTokenOnSave = ref(false);
 
 const recordsRef = computed(() => store.state.records);
 const {
@@ -233,20 +247,30 @@ const remainingFuelText = computed(() => {
   if (!store.state.fuelBalance.baselineEstablished || store.state.fuelBalance.remainingFuelLiters === null) {
     return '当前剩余油量：暂无加油记录';
   }
+
   return `当前剩余油量：${store.state.fuelBalance.remainingFuelLiters.toFixed(3)} L`;
 });
 
-const baselineText = computed(() => (store.state.fuelBalance.baselineEstablished ? '已建立（首次加油记录）' : '未建立（暂无加油记录）'));
+const baselineText = computed(() => (store.state.fuelBalance.baselineEstablished ? '已建立（首条加油记录）' : '未建立（暂无加油记录）'));
 const configPriorityModeText = computed(() =>
-  settings.preferConfigOverLocalStorage
-    ? '当前模式：配置文件优先（已勾选）'
-    : '当前模式：localStorage 优先（未勾选）',
+  settings.preferConfigOverLocalStorage ? '当前模式：配置文件优先（已勾选）' : '当前模式：localStorage 优先（未勾选）',
 );
 const configPriorityEffectText = computed(() =>
   settings.preferConfigOverLocalStorage
     ? '启动时优先使用 public/config/app-config.json；同名配置会覆盖 localStorage。'
     : '启动时优先使用 localStorage；配置文件作为初始默认值。',
 );
+const githubTokenStatusText = computed(() => {
+  if (clearGithubTokenOnSave.value) {
+    return 'Token 状态：本次保存后将清空本地 Token。';
+  }
+
+  if (githubTokenInput.value.trim()) {
+    return 'Token 状态：本次保存后将更新本地 Token（仅浏览器本地保存，转换后存储）。';
+  }
+
+  return store.state.githubToken ? 'Token 状态：本地已保存（已转换存储）。' : 'Token 状态：当前未保存。';
+});
 
 const settings = reactive<AppConfig>({ ...store.state.config });
 
@@ -275,30 +299,29 @@ function saveSettings(): void {
     githubOwner: settings.githubOwner.trim(),
     githubRepo: settings.githubRepo.trim(),
     githubBranch: settings.githubBranch.trim(),
-    githubToken: settings.githubToken.trim(),
     githubRecordsDir: settings.githubRecordsDir.trim() || 'data/records',
     preferConfigOverLocalStorage: settings.preferConfigOverLocalStorage,
   });
-  store.showToast('设置已保存。', 'success');
+
+  let tokenMessage = 'Token 未变更。';
+
+  if (clearGithubTokenOnSave.value) {
+    store.saveGithubToken('');
+    githubTokenInput.value = '';
+    clearGithubTokenOnSave.value = false;
+    tokenMessage = 'Token 已清空。';
+  } else if (githubTokenInput.value.trim()) {
+    store.saveGithubToken(githubTokenInput.value);
+    githubTokenInput.value = '';
+    tokenMessage = 'Token 已更新到本地安全存储。';
+  }
+
+  store.showToast(`设置已保存。${tokenMessage}`, 'success');
 }
 
 function handleResetBaseline(): void {
   store.resetFuelBaseline();
   store.showToast('已清除手动修正，当前剩余油量恢复为自动估算值。', 'info');
-}
-
-function parseDateTimeLocalToUnix(value: string): number | undefined {
-  const text = value.trim();
-  if (!text) {
-    return undefined;
-  }
-
-  const date = new Date(text);
-  if (Number.isNaN(date.getTime())) {
-    return undefined;
-  }
-
-  return Math.floor(date.getTime() / 1000);
 }
 
 async function saveManualRemainingFuel(): Promise<void> {

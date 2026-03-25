@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <main class="page page--record">
     <PageHeader title="加油记录" description="录入油价、油量与价格，支持自动补算与一致性检查。" />
 
@@ -61,6 +61,11 @@
           </label>
 
           <label class="full-width">
+            加油时间（可选）
+            <input v-model="form.occurredAtText" type="datetime-local" />
+          </label>
+
+          <label class="full-width">
             备注（可选）
             <textarea v-model="form.note" rows="3" placeholder="例如：周末返程前补油"></textarea>
           </label>
@@ -114,28 +119,73 @@
         <ul v-if="filteredRecords.length" class="history-list">
           <li v-for="record in filteredRecords" :key="record.id" class="history-item">
             <div class="history-item__top">
-              <strong>{{ toLocalDateTime(record.createdAt) }}</strong>
+              <div class="history-item__title">
+                <strong>{{ toLocalDateTime(record.occurredAt) }}</strong>
+                <span class="muted">记录时间：{{ toLocalDateTime(record.createdAt) }}</span>
+              </div>
               <span :class="record.submittedToGithub ? 'tag tag--success' : 'tag'">
                 {{ record.submittedToGithub ? '已提交 GitHub' : '未提交' }}
               </span>
             </div>
-            <p>
-              油号 {{ record.fuelType }} · {{ record.pricePerLiter.toFixed(2) }} 元/L · {{ record.fuelVolumeLiters.toFixed(3) }} L ·
-              {{ record.totalPriceCny.toFixed(2) }} 元
-            </p>
-            <p class="muted">{{ record.province || '未填地区' }} · {{ record.stationName || '未填加油站' }}</p>
-            <p class="muted">{{ record.note || '无备注' }}</p>
 
-            <div class="inline-actions">
-              <button
-                class="btn btn--secondary"
-                :disabled="isBatchSubmitting || isSubmitting(record.id)"
-                @click="submitRecord(record.id)"
-              >
-                {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
-              </button>
-              <button class="btn btn--danger" :disabled="isBatchSubmitting" @click="removeRecord(record.id)">删除</button>
-            </div>
+            <template v-if="editingRecordId === record.id">
+              <form class="form-grid history-edit-panel" @submit.prevent="saveEditRecord(record.id)">
+                <label>
+                  地区/省份（可选）
+                  <input v-model="editForm.province" type="text" />
+                </label>
+                <label>
+                  油号
+                  <input v-model="editForm.fuelType" type="number" min="1" step="1" />
+                </label>
+                <label>
+                  油价（元/升）
+                  <input v-model="editForm.pricePerLiter" type="number" min="0.01" step="0.01" inputmode="decimal" />
+                </label>
+                <label>
+                  油量（升）
+                  <input v-model="editForm.fuelVolumeLiters" type="number" min="0.01" step="0.001" inputmode="decimal" />
+                </label>
+                <label>
+                  价格（元）
+                  <input v-model="editForm.totalPriceCny" type="number" min="0.01" step="0.01" inputmode="decimal" />
+                </label>
+                <label>
+                  加油站名称（可选）
+                  <input v-model="editForm.stationName" type="text" />
+                </label>
+                <label class="full-width">
+                  加油时间（可选）
+                  <input v-model="editForm.occurredAtText" type="datetime-local" />
+                </label>
+                <label class="full-width">
+                  备注（可选）
+                  <textarea v-model="editForm.note" rows="3"></textarea>
+                </label>
+
+                <div class="inline-actions full-width">
+                  <button class="btn btn--primary" type="submit">保存修改</button>
+                  <button class="btn btn--ghost" type="button" @click="cancelEdit">取消</button>
+                </div>
+              </form>
+            </template>
+
+            <template v-else>
+              <p>
+                油号 {{ record.fuelType }} · {{ record.pricePerLiter.toFixed(2) }} 元/L · {{ record.fuelVolumeLiters.toFixed(3) }} L ·
+                {{ record.totalPriceCny.toFixed(2) }} 元
+              </p>
+              <p class="muted">{{ record.province || '未填地区' }} · {{ record.stationName || '未填加油站' }}</p>
+              <p class="muted">{{ record.note || '无备注' }}</p>
+
+              <div class="inline-actions">
+                <button class="btn btn--ghost" :disabled="isBatchSubmitting" @click="startEdit(record)">编辑</button>
+                <button class="btn btn--secondary" :disabled="isBatchSubmitting || isSubmitting(record.id)" @click="submitRecord(record.id)">
+                  {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
+                </button>
+                <button class="btn btn--danger" :disabled="isBatchSubmitting" @click="removeRecord(record.id)">删除</button>
+              </div>
+            </template>
           </li>
         </ul>
 
@@ -150,7 +200,7 @@ import { computed, reactive, ref } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import { useAppStore } from '../stores/appStore';
 import type { FuelRecord } from '../types/records';
-import { toLocalDateTime } from '../utils/date';
+import { parseDateTimeLocalToUnix, toDateTimeLocalInputValue, toLocalDateTime } from '../utils/date';
 import { exportCsv, exportJson } from '../utils/export';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
@@ -165,7 +215,19 @@ const form = reactive({
   fuelVolumeLiters: '',
   totalPriceCny: '',
   stationName: '',
+  occurredAtText: '',
   note: store.state.config.defaultFuelNote,
+});
+
+const editForm = reactive({
+  province: '',
+  fuelType: '',
+  pricePerLiter: '',
+  fuelVolumeLiters: '',
+  totalPriceCny: '',
+  stationName: '',
+  occurredAtText: '',
+  note: '',
 });
 
 const keyword = ref('');
@@ -174,15 +236,21 @@ const fuelTypeFilter = ref('');
 const submitFilter = ref<'all' | 'submitted' | 'pending'>('all');
 const isBatchSubmitting = ref(false);
 const isSyncingFromGithub = ref(false);
+const editingRecordId = ref<string | null>(null);
 
 const fuelRecords = computed(() =>
   store.state.records
     .filter((record): record is FuelRecord => record.type === 'fuel')
     .sort((a, b) => {
-      if (a.createdAtUnix === b.createdAtUnix) {
-        return b.createdAt.localeCompare(a.createdAt);
+      if (a.occurredAtUnix === b.occurredAtUnix) {
+        if (a.createdAtUnix === b.createdAtUnix) {
+          return b.createdAt.localeCompare(a.createdAt);
+        }
+
+        return b.createdAtUnix - a.createdAtUnix;
       }
-      return b.createdAtUnix - a.createdAtUnix;
+
+      return b.occurredAtUnix - a.occurredAtUnix;
     }),
 );
 
@@ -253,6 +321,16 @@ function autoFillMissing(): void {
   }
 }
 
+function resolveOccurredAtUnixOrReject(value: string): number | undefined {
+  const parsed = parseDateTimeLocalToUnix(value);
+
+  if (value.trim() && parsed === undefined) {
+    throw new Error('加油时间格式无效，请重新填写。');
+  }
+
+  return parsed;
+}
+
 function saveFuelRecord(): void {
   const fuelType = parsePositiveNumber(form.fuelType);
   const price = parsePositiveNumber(form.pricePerLiter);
@@ -266,6 +344,7 @@ function saveFuelRecord(): void {
 
   try {
     store.addFuelRecord({
+      occurredAtUnix: resolveOccurredAtUnixOrReject(form.occurredAtText),
       province: form.province,
       fuelType,
       pricePerLiter: price,
@@ -285,12 +364,72 @@ function saveFuelRecord(): void {
   }
 }
 
+function startEdit(record: FuelRecord): void {
+  editingRecordId.value = record.id;
+  editForm.province = record.province ?? '';
+  editForm.fuelType = String(record.fuelType);
+  editForm.pricePerLiter = record.pricePerLiter.toFixed(2);
+  editForm.fuelVolumeLiters = record.fuelVolumeLiters.toFixed(3);
+  editForm.totalPriceCny = record.totalPriceCny.toFixed(2);
+  editForm.stationName = record.stationName ?? '';
+  editForm.occurredAtText = toDateTimeLocalInputValue(record.occurredAt);
+  editForm.note = record.note ?? '';
+}
+
+function cancelEdit(): void {
+  editingRecordId.value = null;
+}
+
+function saveEditRecord(recordId: string): void {
+  const fuelType = parsePositiveNumber(editForm.fuelType);
+  const price = parsePositiveNumber(editForm.pricePerLiter);
+  const volume = parsePositiveNumber(editForm.fuelVolumeLiters);
+  const total = parsePositiveNumber(editForm.totalPriceCny);
+
+  if (fuelType === null || price === null || volume === null || total === null) {
+    store.showToast('请填写有效的正数：油号、油价、油量、价格。', 'error');
+    return;
+  }
+
+  try {
+    const result = store.updateFuelRecord(recordId, {
+      occurredAtUnix: resolveOccurredAtUnixOrReject(editForm.occurredAtText),
+      province: editForm.province,
+      fuelType,
+      pricePerLiter: price,
+      fuelVolumeLiters: volume,
+      totalPriceCny: total,
+      stationName: editForm.stationName,
+      note: editForm.note,
+    });
+
+    if (!result.updated) {
+      store.showToast('未检测到变化。', 'info');
+      return;
+    }
+
+    editingRecordId.value = null;
+
+    if (result.wasSubmittedToGithub && !result.isSubmittedToGithub) {
+      store.showToast('修改已保存，记录已标记为未提交，请重新同步到 GitHub。', 'info');
+      return;
+    }
+
+    store.showToast('修改已保存到本地。', 'success');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '保存修改失败。', 'error');
+  }
+}
+
 function removeRecord(recordId: string): void {
   if (!window.confirm('确认删除该加油记录吗？')) {
     return;
   }
 
   store.deleteRecord(recordId);
+  if (editingRecordId.value === recordId) {
+    editingRecordId.value = null;
+  }
   store.showToast('加油记录已删除。', 'info');
 }
 
@@ -380,8 +519,20 @@ function exportFuelCsv(): void {
 
   exportCsv(
     `fuel-records-${Date.now()}.csv`,
-    ['createdAt', 'province', 'fuelType', 'pricePerLiter', 'fuelVolumeLiters', 'totalPriceCny', 'stationName', 'note', 'submittedToGithub'],
+    [
+      'occurredAt',
+      'createdAt',
+      'province',
+      'fuelType',
+      'pricePerLiter',
+      'fuelVolumeLiters',
+      'totalPriceCny',
+      'stationName',
+      'note',
+      'submittedToGithub',
+    ],
     filteredRecords.value.map((record) => [
+      toLocalDateTime(record.occurredAt),
       toLocalDateTime(record.createdAt),
       record.province ?? '',
       record.fuelType,

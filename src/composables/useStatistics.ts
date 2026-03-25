@@ -4,10 +4,15 @@ import type { AppRecord, FuelRecord, TripRecord } from '../types/records';
 export function useStatistics(records: Ref<AppRecord[]>) {
   const sortedRecords = computed(() =>
     [...records.value].sort((a, b) => {
-      if (a.createdAtUnix === b.createdAtUnix) {
-        return b.createdAt.localeCompare(a.createdAt);
+      if (a.occurredAtUnix === b.occurredAtUnix) {
+        if (a.createdAtUnix === b.createdAtUnix) {
+          return b.createdAt.localeCompare(a.createdAt);
+        }
+
+        return b.createdAtUnix - a.createdAtUnix;
       }
-      return b.createdAtUnix - a.createdAtUnix;
+
+      return b.occurredAtUnix - a.occurredAtUnix;
     }),
   );
 

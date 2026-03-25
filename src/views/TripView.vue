@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <main class="page page--record">
     <PageHeader title="油耗记录" description="录入平均油耗、里程与油价，自动计算本次耗油量和费用。" />
 
@@ -27,6 +27,11 @@
               :placeholder="latestFuelPricePerLiter === null ? '暂无加油记录，请手动输入油价' : ''"
               required
             />
+          </label>
+
+          <label class="full-width">
+            耗油时间（可选）
+            <input v-model="form.occurredAtText" type="datetime-local" />
           </label>
 
           <label>
@@ -121,29 +126,76 @@
             <div class="history-item__top">
               <label class="checkbox-inline">
                 <input v-model="selectedRecordIds" type="checkbox" :value="record.id" />
-                <strong>{{ toLocalDateTime(record.createdAt) }}</strong>
+                <div class="history-item__title">
+                  <strong>{{ toLocalDateTime(record.occurredAt) }}</strong>
+                  <span class="muted">记录时间：{{ toLocalDateTime(record.createdAt) }}</span>
+                </div>
               </label>
               <span :class="record.submittedToGithub ? 'tag tag--success' : 'tag'">
                 {{ record.submittedToGithub ? '已提交 GitHub' : '未提交' }}
               </span>
             </div>
-            <p>
-              平均油耗 {{ record.averageFuelConsumptionPer100Km.toFixed(2) }} L/100km · 行驶 {{ record.distanceKm.toFixed(2) }} km ·
-              耗油 {{ record.consumedFuelLiters.toFixed(3) }} L · 油价 {{ formatTripPrice(record) }} · 费用 {{ formatTripCost(record) }}
-            </p>
-            <p class="muted route-text">
-              <span>{{ record.startLocation || '未填起点' }}</span>
-              <span class="route-arrow" aria-hidden="true">→</span>
-              <span>{{ record.endLocation || '未填终点' }}</span>
-            </p>
-            <p class="muted">{{ record.note || '无备注' }}</p>
 
-            <div class="inline-actions">
-              <button class="btn btn--secondary" :disabled="isBatchSubmitting || isSubmitting(record.id)" @click="submitRecord(record.id)">
-                {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
-              </button>
-              <button class="btn btn--danger" :disabled="isBatchSubmitting" @click="removeRecord(record.id)">删除</button>
-            </div>
+            <template v-if="editingRecordId === record.id">
+              <form class="form-grid history-edit-panel" @submit.prevent="saveEditRecord(record.id)">
+                <label>
+                  平均油耗（L/100km）
+                  <input v-model="editForm.averageFuelConsumptionPer100Km" type="number" min="0.01" step="0.01" inputmode="decimal" />
+                </label>
+                <label>
+                  行驶距离（km）
+                  <input v-model="editForm.distanceKm" type="number" min="0.01" step="0.01" inputmode="decimal" />
+                </label>
+                <label>
+                  油价（元/升）
+                  <input v-model="editForm.pricePerLiter" type="number" min="0.01" step="0.01" inputmode="decimal" />
+                </label>
+                <label class="full-width">
+                  耗油时间（可选）
+                  <input v-model="editForm.occurredAtText" type="datetime-local" />
+                </label>
+                <label>
+                  起点（可选）
+                  <input v-model="editForm.startLocation" type="text" list="trip-location-options" />
+                </label>
+                <label>
+                  终点（可选）
+                  <input v-model="editForm.endLocation" type="text" list="trip-location-options" />
+                </label>
+                <label class="full-width">
+                  备注（可选）
+                  <textarea v-model="editForm.note" rows="3"></textarea>
+                </label>
+
+                <p class="hint full-width">耗油量预估：{{ editConsumedFuelPreview }}</p>
+
+                <div class="inline-actions full-width">
+                  <button class="btn btn--primary" type="submit">保存修改</button>
+                  <button class="btn btn--ghost" type="button" @click="cancelEdit">取消</button>
+                </div>
+              </form>
+            </template>
+
+            <template v-else>
+              <p>
+                平均油耗 {{ record.averageFuelConsumptionPer100Km.toFixed(2) }} L/100km · 行驶 {{ record.distanceKm.toFixed(2) }} km ·
+                耗油 {{ record.consumedFuelLiters.toFixed(3) }} L · 油价 {{ formatTripPrice(record) }} · 费用 {{ formatTripCost(record) }}
+              </p>
+              <p class="muted route-text">
+                <span class="route-point">{{ record.startLocation || '未填起点' }}</span>
+                <span class="route-arrow" aria-hidden="true"></span>
+                <span class="route-point">{{ record.endLocation || '未填终点' }}</span>
+              </p>
+              <p class="muted">{{ record.note || '无备注' }}</p>
+
+              <div class="inline-actions">
+                <button class="btn btn--ghost" :disabled="isBatchSubmitting" @click="startEdit(record)">编辑</button>
+                <button class="btn btn--secondary" :disabled="isBatchSubmitting || isSubmitting(record.id)" @click="submitRecord(record.id)">
+                  {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
+                </button>
+                <button class="btn btn--danger" :disabled="isBatchSubmitting" @click="removeRecord(record.id)">删除</button>
+              </div>
+            </template>
           </li>
         </ul>
 
@@ -158,7 +210,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import { useAppStore } from '../stores/appStore';
 import type { FuelRecord, TripRecord } from '../types/records';
-import { toLocalDateTime } from '../utils/date';
+import { parseDateTimeLocalToUnix, toDateTimeLocalInputValue, toLocalDateTime } from '../utils/date';
 import { exportCsv, exportJson } from '../utils/export';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
@@ -168,10 +220,15 @@ const latestFuelPricePerLiter = computed<number | null>(() => {
   const latestFuelRecord = store.state.records
     .filter((record): record is FuelRecord => record.type === 'fuel')
     .sort((a, b) => {
-      if (a.createdAtUnix === b.createdAtUnix) {
-        return b.createdAt.localeCompare(a.createdAt);
+      if (a.occurredAtUnix === b.occurredAtUnix) {
+        if (a.createdAtUnix === b.createdAtUnix) {
+          return b.createdAt.localeCompare(a.createdAt);
+        }
+
+        return b.createdAtUnix - a.createdAtUnix;
       }
-      return b.createdAtUnix - a.createdAtUnix;
+
+      return b.occurredAtUnix - a.occurredAtUnix;
     })[0];
 
   return latestFuelRecord?.pricePerLiter ?? null;
@@ -184,9 +241,20 @@ const form = reactive({
       : store.state.config.defaultAverageFuelConsumptionPer100Km.toFixed(2),
   distanceKm: store.state.config.defaultDistanceKm === undefined ? '' : store.state.config.defaultDistanceKm.toFixed(2),
   pricePerLiter: latestFuelPricePerLiter.value === null ? '' : latestFuelPricePerLiter.value.toFixed(2),
+  occurredAtText: '',
   startLocation: '',
   endLocation: '',
   note: store.state.config.defaultTripNote,
+});
+
+const editForm = reactive({
+  averageFuelConsumptionPer100Km: '',
+  distanceKm: '',
+  pricePerLiter: '',
+  occurredAtText: '',
+  startLocation: '',
+  endLocation: '',
+  note: '',
 });
 
 const keyword = ref('');
@@ -196,6 +264,7 @@ const selectedHistoryNote = ref('');
 const importInputRef = ref<HTMLInputElement | null>(null);
 const isBatchSubmitting = ref(false);
 const isSyncingFromGithub = ref(false);
+const editingRecordId = ref<string | null>(null);
 
 watch(
   latestFuelPricePerLiter,
@@ -213,10 +282,15 @@ const tripRecords = computed(() =>
   store.state.records
     .filter((record): record is TripRecord => record.type === 'trip')
     .sort((a, b) => {
-      if (a.createdAtUnix === b.createdAtUnix) {
-        return b.createdAt.localeCompare(a.createdAt);
+      if (a.occurredAtUnix === b.occurredAtUnix) {
+        if (a.createdAtUnix === b.createdAtUnix) {
+          return b.createdAt.localeCompare(a.createdAt);
+        }
+
+        return b.createdAtUnix - a.createdAtUnix;
       }
-      return b.createdAtUnix - a.createdAtUnix;
+
+      return b.occurredAtUnix - a.occurredAtUnix;
     }),
 );
 
@@ -336,6 +410,27 @@ const tripFuelCostPreview = computed(() => {
   return `${roundTo(consumedFuelLitersValue.value * price, 2).toFixed(2)} 元`;
 });
 
+const editConsumedFuelPreview = computed(() => {
+  const average = parsePositiveNumber(editForm.averageFuelConsumptionPer100Km);
+  const distance = parsePositiveNumber(editForm.distanceKm);
+
+  if (average === null || distance === null) {
+    return '--';
+  }
+
+  return `${roundTo((distance / 100) * average, 3).toFixed(3)} L`;
+});
+
+function resolveOccurredAtUnixOrReject(value: string): number | undefined {
+  const parsed = parseDateTimeLocalToUnix(value);
+
+  if (value.trim() && parsed === undefined) {
+    throw new Error('耗油时间格式无效，请重新填写。');
+  }
+
+  return parsed;
+}
+
 function saveTripRecord(): void {
   const average = parsePositiveNumber(form.averageFuelConsumptionPer100Km);
   const distance = parsePositiveNumber(form.distanceKm);
@@ -348,6 +443,7 @@ function saveTripRecord(): void {
 
   try {
     store.addTripRecord({
+      occurredAtUnix: resolveOccurredAtUnixOrReject(form.occurredAtText),
       averageFuelConsumptionPer100Km: average,
       distanceKm: distance,
       pricePerLiter: price,
@@ -361,6 +457,60 @@ function saveTripRecord(): void {
   }
 }
 
+function startEdit(record: TripRecord): void {
+  editingRecordId.value = record.id;
+  editForm.averageFuelConsumptionPer100Km = record.averageFuelConsumptionPer100Km.toFixed(2);
+  editForm.distanceKm = record.distanceKm.toFixed(2);
+  editForm.pricePerLiter = (record.pricePerLiter ?? 0).toFixed(2);
+  editForm.occurredAtText = toDateTimeLocalInputValue(record.occurredAt);
+  editForm.startLocation = record.startLocation ?? '';
+  editForm.endLocation = record.endLocation ?? '';
+  editForm.note = record.note ?? '';
+}
+
+function cancelEdit(): void {
+  editingRecordId.value = null;
+}
+
+function saveEditRecord(recordId: string): void {
+  const average = parsePositiveNumber(editForm.averageFuelConsumptionPer100Km);
+  const distance = parsePositiveNumber(editForm.distanceKm);
+  const price = parsePositiveNumber(editForm.pricePerLiter);
+
+  if (average === null || distance === null || price === null) {
+    store.showToast('请填写有效的正数：平均油耗、行驶距离、油价。', 'error');
+    return;
+  }
+
+  try {
+    const result = store.updateTripRecord(recordId, {
+      occurredAtUnix: resolveOccurredAtUnixOrReject(editForm.occurredAtText),
+      averageFuelConsumptionPer100Km: average,
+      distanceKm: distance,
+      pricePerLiter: price,
+      startLocation: editForm.startLocation,
+      endLocation: editForm.endLocation,
+      note: editForm.note,
+    });
+
+    if (!result.updated) {
+      store.showToast('未检测到变化。', 'info');
+      return;
+    }
+
+    editingRecordId.value = null;
+
+    if (result.wasSubmittedToGithub && !result.isSubmittedToGithub) {
+      store.showToast('修改已保存，记录已标记为未提交，请重新同步到 GitHub。', 'info');
+      return;
+    }
+
+    store.showToast('修改已保存到本地。', 'success');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '保存修改失败。', 'error');
+  }
+}
+
 function removeRecord(recordId: string): void {
   if (!window.confirm('确认删除该油耗记录吗？')) {
     return;
@@ -368,6 +518,9 @@ function removeRecord(recordId: string): void {
 
   store.deleteRecord(recordId);
   selectedRecordIds.value = selectedRecordIds.value.filter((id) => id !== recordId);
+  if (editingRecordId.value === recordId) {
+    editingRecordId.value = null;
+  }
   store.showToast('油耗记录已删除。', 'info');
 }
 
@@ -529,6 +682,7 @@ function exportTripCsv(): void {
   exportCsv(
     `trip-records-${Date.now()}.csv`,
     [
+      'occurredAt',
       'createdAt',
       'averageFuelConsumptionPer100Km',
       'distanceKm',
@@ -541,6 +695,7 @@ function exportTripCsv(): void {
       'submittedToGithub',
     ],
     filteredRecords.value.map((record) => [
+      toLocalDateTime(record.occurredAt),
       toLocalDateTime(record.createdAt),
       record.averageFuelConsumptionPer100Km.toFixed(2),
       record.distanceKm.toFixed(2),

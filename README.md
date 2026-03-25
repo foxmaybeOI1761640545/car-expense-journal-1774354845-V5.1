@@ -17,12 +17,14 @@
   - 记录数据
   - 剩余油量状态（自动估算 + 手动修正）
   - 剩余油量手动变更日志
-  - 页面设置
+  - 页面设置（不含 GitHub Token）
+- GitHub Token 独立本地存储（仅浏览器本地，转换后保存）
 - 默认配置文件初始化（`public/config/app-config.json`）
 - 前端直接调用 GitHub REST API（Repository Contents）提交记录 JSON（支持单条/批量）
 - 剩余油量每次变更（手动修正 / 记录引起的自动变化）都会写入独立日志文件 `fuel-balance-adjustments.json`（持续追加）
 - 支持从 GitHub 拉取历史 JSON 并合并到本地（自动去重）
-- 历史记录倒序展示、筛选、删除、导出 JSON/CSV
+- 支持“业务发生时间”（加油/耗油时间）与“记录创建时间”分离；业务时间留空时自动回退到记录创建时间
+- 历史记录支持倒序展示、筛选、编辑、删除、导出 JSON/CSV
 - 油耗页支持导入 JSON、批量提交与 GitHub 历史拉取
 - 加油页与油耗页的一键提交/拉取按记录类型分开执行；首页提供全局一键提交/拉取
 - 响应式布局（桌面/平板/手机）
@@ -64,12 +66,12 @@ npm run preview
 - `githubOwner`
 - `githubRepo`
 - `githubBranch`（可留空，留空时使用仓库默认分支）
-- `githubToken`
 - `githubRecordsDir`
+- `githubToken`（仅存浏览器本地 Token Vault，不写入配置文件）
 
 Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and write` 权限。
 
-提示：Token 会存储在浏览器 localStorage，仅适合个人场景。
+提示：Token 不会写入 `public/config/app-config.json`，也不会随页面设置配置一起导出。
 
 ## 默认配置文件修改
 
@@ -88,7 +90,6 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 - `githubOwner`
 - `githubRepo`
 - `githubBranch`（可留空，留空时使用仓库默认分支）
-- `githubToken`
 - `githubRecordsDir`
 - `preferConfigOverLocalStorage`
 
@@ -108,7 +109,8 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 ## 记录保存与提交
 
 ### 本地保存
-- 所有新增/删除都会立即写入 localStorage。
+- 所有新增/编辑/删除都会立即写入 localStorage。
+- 若记录曾提交过 GitHub，编辑后会自动标记为“未提交”，提示重新同步。
 
 ### 提交到 GitHub
 - 可对单条记录点击“提交到 GitHub”。
@@ -118,6 +120,7 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 - 使用 `PUT /repos/{owner}/{repo}/contents/{path}`。
 - 文件命名：`<githubRecordsDir>/<10位Unix秒时间戳>-<record.id>.json`
   - 例如：`data/records/1742788800-trip-a1b2c3.json`
+- 若是已提交记录被编辑，重新提交时会生成新文件（保留历史版本）。
 
 ### 从 GitHub 拉取历史
 - 油耗页支持点击“从 GitHub 拉取油耗历史（仅油耗）”。
@@ -127,6 +130,7 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 - 合并时会按 `id` 去重，重复项跳过，并提示新增/重复/无效数量。
 
 JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
+同时保留 `occurredAt/occurredAtUnix`（业务发生时间）与 `createdAt/createdAtUnix`（记录创建时间）。
 
 ## 路由页面结构
 
@@ -141,19 +145,19 @@ JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
   - 常见问题排查
 - 加油记录页 `/#/fuel`
   - 顶部返回首页
-  - 加油表单（自动补算 + 一致性检查）
-  - 历史记录（筛选/删除/导出/提交）
+  - 加油表单（自动补算 + 一致性检查 + 可选加油时间）
+  - 历史记录（筛选/编辑/删除/导出/提交）
 - 油耗记录页 `/#/trip`
   - 顶部返回首页
-  - 油耗表单（自动计算耗油量）
-  - 历史记录（筛选/删除/导出/导入/单条与批量提交/拉取 GitHub 历史）
+  - 油耗表单（自动计算耗油量 + 可选耗油时间）
+  - 历史记录（筛选/编辑/删除/导出/导入/单条与批量提交/拉取 GitHub 历史）
 
 ## 剩余油量统计逻辑
 
 - 无加油记录：显示“暂无加油记录”。
 - 只要存在加油记录：自动建立统计基准（无需手动建基准）。
 - 自动估算规则：
-  - 从首次加油记录开始
+  - 从业务时间最早的加油记录开始
   - 加油：`remaining += fuelVolumeLiters`
   - 油耗：`remaining -= consumedFuelLiters`
 - 支持负数结果：
@@ -187,6 +191,7 @@ src/
     balanceService.ts
     brandingService.ts
     configService.ts
+    githubTokenVaultService.ts
     githubService.ts
     localStorageService.ts
   stores/
@@ -206,3 +211,9 @@ src/
   App.vue
   main.ts
 ```
+
+## 提交规范
+
+- 统一提交说明模板与历史提交总结见：[docs/COMMIT_CONVENTION.md](docs/COMMIT_CONVENTION.md)
+- 提交正文要求中英双语（中文 6 行 + English 6 lines），不适用项填 `N/A`
+- 可直接启用仓库模板：`git config commit.template .gitmessage`

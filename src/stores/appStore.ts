@@ -7,11 +7,20 @@ import { createEmptyFuelBalance, recalculateFuelBalance } from '../services/bala
 import { applyBranding } from '../services/brandingService';
 import { loadConfigFile, resolveAppConfig } from '../services/configService';
 import { appendFuelBalanceAdjustmentToGithub, fetchRecordsFromGithub, submitRecordToGithub } from '../services/githubService';
-import { loadAppData, loadLocalConfig, saveAppData, saveLocalConfig } from '../services/localStorageService';
-import { nowIsoString, nowUnixSeconds } from '../utils/date';
+import { clearGithubTokenFromVault, loadGithubTokenFromVault, saveGithubTokenToVault } from '../services/githubTokenVaultService';
+import {
+  loadAppData,
+  loadLegacyGithubTokenFromLocalConfig,
+  loadLocalConfig,
+  removeLegacyGithubTokenFromLocalConfig,
+  saveAppData,
+  saveLocalConfig,
+} from '../services/localStorageService';
+import { nowIsoString, nowUnixSeconds, unixSecondsToIsoString } from '../utils/date';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
 interface FuelRecordInput {
+  occurredAtUnix?: number;
   province?: string;
   fuelType: number;
   pricePerLiter: number;
@@ -22,12 +31,19 @@ interface FuelRecordInput {
 }
 
 interface TripRecordInput {
+  occurredAtUnix?: number;
   averageFuelConsumptionPer100Km: number;
   distanceKm: number;
   pricePerLiter: number;
   startLocation?: string;
   endLocation?: string;
   note?: string;
+}
+
+interface UpdateRecordResult {
+  updated: boolean;
+  wasSubmittedToGithub: boolean;
+  isSubmittedToGithub: boolean;
 }
 
 interface UpdateFuelBalanceInput {
@@ -77,6 +93,7 @@ let toastTimer: number | null = null;
 const state = reactive<AppStoreState>({
   initialized: false,
   config: { ...DEFAULT_APP_CONFIG },
+  githubToken: '',
   records: [],
   fuelBalance: createEmptyFuelBalance(),
   fuelBalanceAdjustments: [],
@@ -89,11 +106,15 @@ const state = reactive<AppStoreState>({
 });
 
 function compareRecordsByTimeAsc(a: AppRecord, b: AppRecord): number {
-  if (a.createdAtUnix === b.createdAtUnix) {
-    return a.createdAt.localeCompare(b.createdAt);
+  if (a.occurredAtUnix === b.occurredAtUnix) {
+    if (a.createdAtUnix === b.createdAtUnix) {
+      return a.createdAt.localeCompare(b.createdAt);
+    }
+
+    return a.createdAtUnix - b.createdAtUnix;
   }
 
-  return a.createdAtUnix - b.createdAtUnix;
+  return a.occurredAtUnix - b.occurredAtUnix;
 }
 
 function compareFuelBalanceAdjustmentsByTimeAsc(a: FuelBalanceAdjustmentLog, b: FuelBalanceAdjustmentLog): number {
@@ -185,6 +206,38 @@ function sanitizeFuelBalanceAdjustments(raw: unknown): FuelBalanceAdjustmentLog[
     .sort(compareFuelBalanceAdjustmentsByTimeAsc);
 }
 
+function normalizeOccurredTime(input: {
+  occurredAt: unknown;
+  occurredAtUnix: unknown;
+  fallbackUnix: number;
+}): { occurredAt: string; occurredAtUnix: number } {
+  const fallbackUnix = Math.floor(input.fallbackUnix);
+  let occurredAtUnix = Number.isFinite(input.occurredAtUnix) ? Math.floor(Number(input.occurredAtUnix)) : fallbackUnix;
+  let occurredAt = typeof input.occurredAt === 'string' && input.occurredAt.trim() ? input.occurredAt : '';
+
+  if (occurredAt) {
+    const parsed = new Date(occurredAt);
+    if (!Number.isNaN(parsed.getTime())) {
+      const parsedUnix = Math.floor(parsed.getTime() / 1000);
+      if (!Number.isFinite(input.occurredAtUnix)) {
+        occurredAtUnix = parsedUnix;
+      }
+      occurredAt = parsed.toISOString();
+    } else {
+      occurredAt = '';
+    }
+  }
+
+  if (!occurredAt) {
+    occurredAt = unixSecondsToIsoString(occurredAtUnix);
+  }
+
+  return {
+    occurredAt,
+    occurredAtUnix,
+  };
+}
+
 function sanitizeRecord(raw: unknown): AppRecord | null {
   if (!raw || typeof raw !== 'object') {
     return null;
@@ -210,9 +263,17 @@ function sanitizeRecord(raw: unknown): AppRecord | null {
       return null;
     }
 
+    const normalizedOccurred = normalizeOccurredTime({
+      occurredAt: record.occurredAt,
+      occurredAtUnix: record.occurredAtUnix,
+      fallbackUnix: Number(record.createdAtUnix),
+    });
+
     const normalized: FuelRecord = {
       id: record.id,
       type: 'fuel',
+      occurredAt: normalizedOccurred.occurredAt,
+      occurredAtUnix: normalizedOccurred.occurredAtUnix,
       createdAt: record.createdAt,
       createdAtUnix: Number(record.createdAtUnix),
       province: typeof record.province === 'string' ? record.province : undefined,
@@ -246,9 +307,17 @@ function sanitizeRecord(raw: unknown): AppRecord | null {
         : roundTo(roundTo(consumed, 3) * normalizedPricePerLiter, 2)
       : roundTo(totalFuelCostCny, 2);
 
+  const normalizedOccurred = normalizeOccurredTime({
+    occurredAt: record.occurredAt,
+    occurredAtUnix: record.occurredAtUnix,
+    fallbackUnix: Number(record.createdAtUnix),
+  });
+
   const normalized: TripRecord = {
     id: record.id,
     type: 'trip',
+    occurredAt: normalizedOccurred.occurredAt,
+    occurredAtUnix: normalizedOccurred.occurredAtUnix,
     createdAt: record.createdAt,
     createdAtUnix: Number(record.createdAtUnix),
     averageFuelConsumptionPer100Km: roundTo(average, 2),
@@ -332,16 +401,6 @@ function makeRecordId(type: 'fuel' | 'trip' | 'fuel-balance-adjustment'): string
   }
 
   return `${type}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
-function unixSecondsToIsoString(unixSeconds: number): string {
-  const date = new Date(unixSeconds * 1000);
-
-  if (Number.isNaN(date.getTime())) {
-    return nowIsoString();
-  }
-
-  return date.toISOString();
 }
 
 function normalizeNullableLiters(value: number | null): number | null {
@@ -442,6 +501,19 @@ export async function initializeStore(): Promise<void> {
   const [fileConfig, localConfig, persistedData] = await Promise.all([loadConfigFile(), Promise.resolve(loadLocalConfig()), Promise.resolve(loadAppData())]);
 
   state.config = resolveAppConfig(fileConfig, localConfig);
+  const vaultToken = loadGithubTokenFromVault();
+  const legacyToken = loadLegacyGithubTokenFromLocalConfig();
+  if (!vaultToken && legacyToken) {
+    saveGithubTokenToVault(legacyToken);
+    state.githubToken = legacyToken;
+  } else {
+    state.githubToken = vaultToken;
+  }
+
+  if (legacyToken) {
+    removeLegacyGithubTokenFromLocalConfig();
+  }
+
   applyBranding(state.config);
   state.records = sanitizeRecords(persistedData.records);
   state.fuelBalance = sanitizeFuelBalance(persistedData.fuelBalance);
@@ -461,6 +533,23 @@ function updateConfig(partial: Partial<AppConfig>): void {
   saveLocalConfig(state.config);
 }
 
+function saveGithubToken(token: string): void {
+  const normalized = token.trim();
+  state.githubToken = normalized;
+
+  if (normalized) {
+    saveGithubTokenToVault(normalized);
+    return;
+  }
+
+  clearGithubTokenFromVault();
+}
+
+function normalizeOptionalText(value?: string): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
 function addFuelRecord(input: FuelRecordInput): FuelRecord {
   const fuelType = parsePositiveNumber(input.fuelType);
   const price = parsePositiveNumber(input.pricePerLiter);
@@ -472,10 +561,18 @@ function addFuelRecord(input: FuelRecordInput): FuelRecord {
   }
 
   const createdAtUnix = nowUnixSeconds();
+  const createdAt = nowIsoString();
+  const occurred = normalizeOccurredTime({
+    occurredAt: undefined,
+    occurredAtUnix: input.occurredAtUnix,
+    fallbackUnix: createdAtUnix,
+  });
   const record: FuelRecord = {
     id: makeRecordId('fuel'),
     type: 'fuel',
-    createdAt: nowIsoString(),
+    occurredAt: occurred.occurredAt,
+    occurredAtUnix: occurred.occurredAtUnix,
+    createdAt,
     createdAtUnix,
     province: input.province?.trim() || undefined,
     fuelType: Math.round(fuelType),
@@ -487,11 +584,11 @@ function addFuelRecord(input: FuelRecordInput): FuelRecord {
     submittedToGithub: false,
   };
 
-  state.records.push(record);
+  state.records = [...state.records, record].sort(compareRecordsByTimeAsc);
   recalculateAndPersist({
     appendAdjustmentLog: true,
     adjustmentSource: 'records',
-    balanceChangedAtUnix: createdAtUnix,
+    balanceChangedAtUnix: record.occurredAtUnix,
   });
   return record;
 }
@@ -508,11 +605,19 @@ function addTripRecord(input: TripRecordInput): TripRecord {
   const consumedFuelLiters = roundTo((distance / 100) * average, 3);
   const totalFuelCostCny = roundTo(consumedFuelLiters * price, 2);
   const createdAtUnix = nowUnixSeconds();
+  const createdAt = nowIsoString();
+  const occurred = normalizeOccurredTime({
+    occurredAt: undefined,
+    occurredAtUnix: input.occurredAtUnix,
+    fallbackUnix: createdAtUnix,
+  });
 
   const record: TripRecord = {
     id: makeRecordId('trip'),
     type: 'trip',
-    createdAt: nowIsoString(),
+    occurredAt: occurred.occurredAt,
+    occurredAtUnix: occurred.occurredAtUnix,
+    createdAt,
     createdAtUnix,
     averageFuelConsumptionPer100Km: roundTo(average, 2),
     distanceKm: roundTo(distance, 2),
@@ -525,15 +630,167 @@ function addTripRecord(input: TripRecordInput): TripRecord {
     submittedToGithub: false,
   };
 
-  state.records.push(record);
+  state.records = [...state.records, record].sort(compareRecordsByTimeAsc);
   recalculateAndPersist({
     appendAdjustmentLog: true,
     adjustmentSource: 'records',
-    balanceChangedAtUnix: createdAtUnix,
+    balanceChangedAtUnix: record.occurredAtUnix,
   });
   return record;
 }
 
+function updateFuelRecord(recordId: string, input: FuelRecordInput): UpdateRecordResult {
+  const index = state.records.findIndex((record) => record.id === recordId);
+
+  if (index < 0) {
+    throw new Error('???????????');
+  }
+
+  const current = state.records[index];
+  if (current.type !== 'fuel') {
+    throw new Error('?????????????????');
+  }
+
+  const fuelType = parsePositiveNumber(input.fuelType);
+  const price = parsePositiveNumber(input.pricePerLiter);
+  const volume = parsePositiveNumber(input.fuelVolumeLiters);
+  const total = parsePositiveNumber(input.totalPriceCny);
+
+  if (fuelType === null || price === null || volume === null || total === null) {
+    throw new Error('???????????????');
+  }
+
+  const occurred = normalizeOccurredTime({
+    occurredAt: undefined,
+    occurredAtUnix: input.occurredAtUnix,
+    fallbackUnix: current.createdAtUnix,
+  });
+
+  const next: FuelRecord = {
+    ...current,
+    occurredAt: occurred.occurredAt,
+    occurredAtUnix: occurred.occurredAtUnix,
+    province: normalizeOptionalText(input.province),
+    fuelType: Math.round(fuelType),
+    pricePerLiter: roundTo(price, 2),
+    fuelVolumeLiters: roundTo(volume, 3),
+    totalPriceCny: roundTo(total, 2),
+    stationName: normalizeOptionalText(input.stationName),
+    note: normalizeOptionalText(input.note),
+  };
+
+  const updated =
+    next.occurredAtUnix !== current.occurredAtUnix ||
+    next.province !== current.province ||
+    next.fuelType !== current.fuelType ||
+    next.pricePerLiter !== current.pricePerLiter ||
+    next.fuelVolumeLiters !== current.fuelVolumeLiters ||
+    next.totalPriceCny !== current.totalPriceCny ||
+    next.stationName !== current.stationName ||
+    next.note !== current.note;
+
+  if (!updated) {
+    return {
+      updated: false,
+      wasSubmittedToGithub: current.submittedToGithub,
+      isSubmittedToGithub: current.submittedToGithub,
+    };
+  }
+
+  const wasSubmittedToGithub = current.submittedToGithub;
+  next.submittedToGithub = wasSubmittedToGithub ? false : current.submittedToGithub;
+  state.records[index] = next;
+  state.records = [...state.records].sort(compareRecordsByTimeAsc);
+  recalculateAndPersist({
+    appendAdjustmentLog: true,
+    adjustmentSource: 'records',
+    balanceChangedAtUnix: nowUnixSeconds(),
+  });
+
+  return {
+    updated: true,
+    wasSubmittedToGithub,
+    isSubmittedToGithub: next.submittedToGithub,
+  };
+}
+
+function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecordResult {
+  const index = state.records.findIndex((record) => record.id === recordId);
+
+  if (index < 0) {
+    throw new Error('???????????');
+  }
+
+  const current = state.records[index];
+  if (current.type !== 'trip') {
+    throw new Error('?????????????????');
+  }
+
+  const average = parsePositiveNumber(input.averageFuelConsumptionPer100Km);
+  const distance = parsePositiveNumber(input.distanceKm);
+  const price = parsePositiveNumber(input.pricePerLiter);
+
+  if (average === null || distance === null || price === null) {
+    throw new Error('???????????????');
+  }
+
+  const consumedFuelLiters = roundTo((distance / 100) * average, 3);
+  const totalFuelCostCny = roundTo(consumedFuelLiters * price, 2);
+  const occurred = normalizeOccurredTime({
+    occurredAt: undefined,
+    occurredAtUnix: input.occurredAtUnix,
+    fallbackUnix: current.createdAtUnix,
+  });
+
+  const next: TripRecord = {
+    ...current,
+    occurredAt: occurred.occurredAt,
+    occurredAtUnix: occurred.occurredAtUnix,
+    averageFuelConsumptionPer100Km: roundTo(average, 2),
+    distanceKm: roundTo(distance, 2),
+    consumedFuelLiters,
+    pricePerLiter: roundTo(price, 2),
+    totalFuelCostCny,
+    startLocation: normalizeOptionalText(input.startLocation),
+    endLocation: normalizeOptionalText(input.endLocation),
+    note: normalizeOptionalText(input.note),
+  };
+
+  const updated =
+    next.occurredAtUnix !== current.occurredAtUnix ||
+    next.averageFuelConsumptionPer100Km !== current.averageFuelConsumptionPer100Km ||
+    next.distanceKm !== current.distanceKm ||
+    next.consumedFuelLiters !== current.consumedFuelLiters ||
+    next.pricePerLiter !== current.pricePerLiter ||
+    next.totalFuelCostCny !== current.totalFuelCostCny ||
+    next.startLocation !== current.startLocation ||
+    next.endLocation !== current.endLocation ||
+    next.note !== current.note;
+
+  if (!updated) {
+    return {
+      updated: false,
+      wasSubmittedToGithub: current.submittedToGithub,
+      isSubmittedToGithub: current.submittedToGithub,
+    };
+  }
+
+  const wasSubmittedToGithub = current.submittedToGithub;
+  next.submittedToGithub = wasSubmittedToGithub ? false : current.submittedToGithub;
+  state.records[index] = next;
+  state.records = [...state.records].sort(compareRecordsByTimeAsc);
+  recalculateAndPersist({
+    appendAdjustmentLog: true,
+    adjustmentSource: 'records',
+    balanceChangedAtUnix: nowUnixSeconds(),
+  });
+
+  return {
+    updated: true,
+    wasSubmittedToGithub,
+    isSubmittedToGithub: next.submittedToGithub,
+  };
+}
 function deleteRecord(recordId: string): void {
   const next = state.records.filter((record) => record.id !== recordId);
 
@@ -579,7 +836,7 @@ async function submitRecord(recordId: string): Promise<{ path: string; sha?: str
   state.submittingRecordIds = [...state.submittingRecordIds, recordId];
 
   try {
-    const result = await submitRecordToGithub(record, state.config);
+    const result = await submitRecordToGithub(record, state.config, state.githubToken);
     record.submittedToGithub = true;
     persistState();
     return result;
@@ -595,7 +852,7 @@ async function submitFuelBalanceAdjustment(adjustmentId: string): Promise<{ path
     throw new Error('油量变更日志不存在，无法提交。');
   }
 
-  const result = await appendFuelBalanceAdjustmentToGithub(adjustment, state.config);
+  const result = await appendFuelBalanceAdjustmentToGithub(adjustment, state.config, state.githubToken);
   adjustment.submittedToGithub = true;
   adjustment.githubPath = result.path;
   persistState();
@@ -768,7 +1025,7 @@ async function submitPendingRecords(recordType?: RecordType): Promise<BatchSubmi
 }
 
 async function syncRecordsFromGithub(recordType?: RecordType): Promise<SyncRecordsResult> {
-  const githubRecords = await fetchRecordsFromGithub(state.config);
+  const githubRecords = await fetchRecordsFromGithub(state.config, state.githubToken);
   const filteredFromGithub = filterRecordsByType(githubRecords, recordType);
   const normalizedFromGithub = filteredFromGithub.map((item) => {
     if (!item || typeof item !== 'object') {
@@ -793,8 +1050,11 @@ export function useAppStore() {
     state,
     initializeStore,
     updateConfig,
+    saveGithubToken,
     addFuelRecord,
     addTripRecord,
+    updateFuelRecord,
+    updateTripRecord,
     deleteRecord,
     resetFuelBaseline,
     updateRemainingFuelLiters,

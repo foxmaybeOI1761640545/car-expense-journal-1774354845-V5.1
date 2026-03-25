@@ -44,9 +44,6 @@ function sanitizePartialConfig(raw: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof raw.githubBranch === 'string') {
     next.githubBranch = raw.githubBranch.trim();
   }
-  if (typeof raw.githubToken === 'string') {
-    next.githubToken = raw.githubToken.trim();
-  }
   if (typeof raw.githubRecordsDir === 'string' && raw.githubRecordsDir.trim()) {
     next.githubRecordsDir = raw.githubRecordsDir.trim();
   }

@@ -33,6 +33,7 @@ export interface ToastState {
 export interface AppStoreState {
   initialized: boolean;
   config: AppConfig;
+  githubToken: string;
   records: AppRecord[];
   fuelBalance: FuelBalanceState;
   fuelBalanceAdjustments: FuelBalanceAdjustmentLog[];
