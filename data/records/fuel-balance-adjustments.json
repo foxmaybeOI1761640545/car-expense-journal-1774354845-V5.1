@@ -31,5 +31,16 @@
     "remainingFuelLiters": 21.19,
     "autoCalculatedFuelLiters": 21.19,
     "manualOffsetLiters": 0
+  },
+  {
+    "id": "fuel-balance-adjustment-e49f5c86-eb72-42b8-801a-7dfdddc01d97",
+    "source": "manual",
+    "recordedAt": "2026-03-25T10:54:12.413Z",
+    "recordedAtUnix": 1774436052,
+    "balanceChangedAt": "2026-03-25T10:54:00.000Z",
+    "balanceChangedAtUnix": 1774436040,
+    "remainingFuelLiters": 19.928,
+    "autoCalculatedFuelLiters": 21.19,
+    "manualOffsetLiters": -1.262
   }
 ]
