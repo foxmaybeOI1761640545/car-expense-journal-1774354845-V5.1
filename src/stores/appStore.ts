@@ -275,6 +275,89 @@ function sanitizeUserProfile(raw: unknown): UserProfile {
   };
 }
 
+function normalizeGithubSubmittedTargets(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  const unique = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const item of raw) {
+    if (typeof item !== 'string') {
+      continue;
+    }
+
+    const value = item.trim();
+    if (!value || unique.has(value)) {
+      continue;
+    }
+
+    unique.add(value);
+    normalized.push(value);
+  }
+
+  return normalized;
+}
+
+function makeGithubSubmissionTargetKey(config: AppConfig): string | null {
+  const owner = config.githubOwner.trim();
+  const repo = config.githubRepo.trim();
+  const recordsDir = config.githubRecordsDir.trim().replace(/^\/+|\/+$/g, '');
+
+  if (!owner || !repo || !recordsDir) {
+    return null;
+  }
+
+  const branch = config.githubBranch.trim() || 'default';
+  return `${owner}/${repo}#${branch}:${recordsDir}`;
+}
+
+function getCurrentGithubSubmissionTargetKey(): string | null {
+  return makeGithubSubmissionTargetKey(state.config);
+}
+
+function isRecordSubmittedForTarget(
+  record: Pick<AppRecord, 'submittedToGithub' | 'githubSubmittedTargets'>,
+  targetKey: string | null,
+): boolean {
+  if (!targetKey) {
+    return Boolean(record.submittedToGithub);
+  }
+
+  return normalizeGithubSubmittedTargets(record.githubSubmittedTargets).includes(targetKey);
+}
+
+function resolveRecordSubmissionState(raw: {
+  submittedToGithub: unknown;
+  githubSubmittedTargets: unknown;
+  targetKey: string | null;
+}): { submittedToGithub: boolean; githubSubmittedTargets: string[] } {
+  const targets = normalizeGithubSubmittedTargets(raw.githubSubmittedTargets);
+
+  if (targets.length === 0 && Boolean(raw.submittedToGithub) && raw.targetKey) {
+    targets.push(raw.targetKey);
+  }
+
+  return {
+    submittedToGithub: raw.targetKey ? targets.includes(raw.targetKey) : Boolean(raw.submittedToGithub),
+    githubSubmittedTargets: targets,
+  };
+}
+
+function refreshRecordSubmissionStatusForTarget(targetKey: string | null): void {
+  state.records = state.records
+    .map((record) => {
+      const targets = normalizeGithubSubmittedTargets(record.githubSubmittedTargets);
+      return {
+        ...record,
+        githubSubmittedTargets: targets,
+        submittedToGithub: targetKey ? targets.includes(targetKey) : Boolean(record.submittedToGithub),
+      };
+    })
+    .sort(compareRecordsByTimeAsc);
+}
+
 function normalizeOccurredTime(input: {
   occurredAt: unknown;
   occurredAtUnix: unknown;
@@ -307,7 +390,7 @@ function normalizeOccurredTime(input: {
   };
 }
 
-function sanitizeRecord(raw: unknown): AppRecord | null {
+function sanitizeRecord(raw: unknown, targetKey: string | null): AppRecord | null {
   if (!raw || typeof raw !== 'object') {
     return null;
   }
@@ -321,6 +404,12 @@ function sanitizeRecord(raw: unknown): AppRecord | null {
   if (typeof record.id !== 'string' || typeof record.createdAt !== 'string' || !Number.isFinite(record.createdAtUnix)) {
     return null;
   }
+
+  const submissionState = resolveRecordSubmissionState({
+    submittedToGithub: record.submittedToGithub,
+    githubSubmittedTargets: record.githubSubmittedTargets,
+    targetKey,
+  });
 
   if (record.type === 'fuel') {
     const fuelType = parsePositiveNumber(record.fuelType as number);
@@ -352,7 +441,8 @@ function sanitizeRecord(raw: unknown): AppRecord | null {
       totalPriceCny: roundTo(totalPriceCny, 2),
       stationName: typeof record.stationName === 'string' ? record.stationName : undefined,
       note: typeof record.note === 'string' ? record.note : undefined,
-      submittedToGithub: Boolean(record.submittedToGithub),
+      submittedToGithub: submissionState.submittedToGithub,
+      githubSubmittedTargets: submissionState.githubSubmittedTargets,
     };
 
     return normalized;
@@ -397,19 +487,20 @@ function sanitizeRecord(raw: unknown): AppRecord | null {
     startLocation: typeof record.startLocation === 'string' ? record.startLocation : undefined,
     endLocation: typeof record.endLocation === 'string' ? record.endLocation : undefined,
     note: typeof record.note === 'string' ? record.note : undefined,
-    submittedToGithub: Boolean(record.submittedToGithub),
+    submittedToGithub: submissionState.submittedToGithub,
+    githubSubmittedTargets: submissionState.githubSubmittedTargets,
   };
 
   return normalized;
 }
 
-function sanitizeRecords(records: unknown): AppRecord[] {
+function sanitizeRecords(records: unknown, targetKey: string | null): AppRecord[] {
   if (!Array.isArray(records)) {
     return [];
   }
 
   return records
-    .map((item) => sanitizeRecord(item))
+    .map((item) => sanitizeRecord(item, targetKey))
     .filter((item): item is AppRecord => item !== null)
     .sort(compareRecordsByTimeAsc);
 }
@@ -585,7 +676,7 @@ export async function initializeStore(): Promise<void> {
 
   applyBranding(state.config);
   state.userProfile = sanitizeUserProfile(persistedData.userProfile);
-  state.records = sanitizeRecords(persistedData.records);
+  state.records = sanitizeRecords(persistedData.records, getCurrentGithubSubmissionTargetKey());
   state.fuelBalance = sanitizeFuelBalance(persistedData.fuelBalance);
   state.fuelBalanceAdjustments = sanitizeFuelBalanceAdjustments(persistedData.fuelBalanceAdjustments);
   state.fuelBalance = recalculateFuelBalance(state.records, state.fuelBalance);
@@ -595,12 +686,19 @@ export async function initializeStore(): Promise<void> {
 }
 
 function updateConfig(partial: Partial<AppConfig>): void {
+  const previousTargetKey = getCurrentGithubSubmissionTargetKey();
   state.config = {
     ...state.config,
     ...partial,
   };
   applyBranding(state.config);
   saveLocalConfig(state.config);
+
+  const nextTargetKey = getCurrentGithubSubmissionTargetKey();
+  if (nextTargetKey !== previousTargetKey) {
+    refreshRecordSubmissionStatusForTarget(nextTargetKey);
+    persistState();
+  }
 }
 
 function saveGithubToken(token: string): void {
@@ -775,6 +873,7 @@ function addFuelRecord(input: FuelRecordInput): FuelRecord {
     stationName: input.stationName?.trim() || undefined,
     note: input.note?.trim() || undefined,
     submittedToGithub: false,
+    githubSubmittedTargets: [],
   };
 
   state.records = [...state.records, record].sort(compareRecordsByTimeAsc);
@@ -792,7 +891,7 @@ function addTripRecord(input: TripRecordInput): TripRecord {
   const price = parsePositiveNumber(input.pricePerLiter);
 
   if (average === null || distance === null || price === null) {
-    throw new Error('油耗记录存在无效数值，请检查。');
+    throw new Error('耗油记录存在无效数值，请检查。');
   }
 
   const consumedFuelLiters = roundTo((distance / 100) * average, 3);
@@ -821,6 +920,7 @@ function addTripRecord(input: TripRecordInput): TripRecord {
     endLocation: input.endLocation?.trim() || undefined,
     note: input.note?.trim() || undefined,
     submittedToGithub: false,
+    githubSubmittedTargets: [],
   };
 
   state.records = [...state.records, record].sort(compareRecordsByTimeAsc);
@@ -891,7 +991,8 @@ function updateFuelRecord(recordId: string, input: FuelRecordInput): UpdateRecor
   }
 
   const wasSubmittedToGithub = current.submittedToGithub;
-  next.submittedToGithub = wasSubmittedToGithub ? false : current.submittedToGithub;
+  next.submittedToGithub = false;
+  next.githubSubmittedTargets = [];
   state.records[index] = next;
   state.records = [...state.records].sort(compareRecordsByTimeAsc);
   recalculateAndPersist({
@@ -969,7 +1070,8 @@ function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecor
   }
 
   const wasSubmittedToGithub = current.submittedToGithub;
-  next.submittedToGithub = wasSubmittedToGithub ? false : current.submittedToGithub;
+  next.submittedToGithub = false;
+  next.githubSubmittedTargets = [];
   state.records[index] = next;
   state.records = [...state.records].sort(compareRecordsByTimeAsc);
   recalculateAndPersist({
@@ -1030,7 +1132,15 @@ async function submitRecord(recordId: string): Promise<{ path: string; sha?: str
 
   try {
     const result = await submitRecordToGithub(record, state.config, state.githubToken);
-    record.submittedToGithub = true;
+    const targetKey = getCurrentGithubSubmissionTargetKey();
+    const targets = normalizeGithubSubmittedTargets(record.githubSubmittedTargets);
+
+    if (targetKey && !targets.includes(targetKey)) {
+      targets.push(targetKey);
+    }
+
+    record.githubSubmittedTargets = targets;
+    record.submittedToGithub = targetKey ? targets.includes(targetKey) : true;
     persistState();
     return result;
   } finally {
@@ -1152,9 +1262,10 @@ function importRecords(raw: unknown): ImportRecordsResult {
 
   const sanitized: AppRecord[] = [];
   let invalid = 0;
+  const targetKey = getCurrentGithubSubmissionTargetKey();
 
   for (const item of candidates) {
-    const normalized = sanitizeRecord(item);
+    const normalized = sanitizeRecord(item, targetKey);
 
     if (normalized === null) {
       invalid += 1;
@@ -1223,8 +1334,9 @@ function filterRecordsByType(records: unknown[], recordType?: RecordType): unkno
 }
 
 function getPendingRecordIds(recordType?: RecordType): string[] {
+  const targetKey = getCurrentGithubSubmissionTargetKey();
   return state.records
-    .filter((record) => !record.submittedToGithub && (!recordType || record.type === recordType))
+    .filter((record) => !isRecordSubmittedForTarget(record, targetKey) && (!recordType || record.type === recordType))
     .map((record) => record.id);
 }
 
@@ -1235,14 +1347,22 @@ async function submitPendingRecords(recordType?: RecordType): Promise<BatchSubmi
 async function syncRecordsFromGithub(recordType?: RecordType): Promise<SyncRecordsResult> {
   const githubRecords = await fetchRecordsFromGithub(state.config, state.githubToken);
   const filteredFromGithub = filterRecordsByType(githubRecords, recordType);
+  const targetKey = getCurrentGithubSubmissionTargetKey();
   const normalizedFromGithub = filteredFromGithub.map((item) => {
     if (!item || typeof item !== 'object') {
       return item;
     }
 
+    const value = item as Record<string, unknown>;
+    const targets = normalizeGithubSubmittedTargets(value.githubSubmittedTargets);
+    if (targetKey && !targets.includes(targetKey)) {
+      targets.push(targetKey);
+    }
+
     return {
-      ...(item as Record<string, unknown>),
-      submittedToGithub: true,
+      ...value,
+      submittedToGithub: targetKey ? true : Boolean(value.submittedToGithub),
+      githubSubmittedTargets: targets,
     };
   });
   const importResult = importRecords(normalizedFromGithub);

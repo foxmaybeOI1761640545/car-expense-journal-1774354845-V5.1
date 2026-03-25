@@ -9,6 +9,7 @@ export interface BaseRecord {
   createdAtUnix: number;
   note?: string;
   submittedToGithub: boolean;
+  githubSubmittedTargets: string[];
 }
 
 export interface FuelRecord extends BaseRecord {

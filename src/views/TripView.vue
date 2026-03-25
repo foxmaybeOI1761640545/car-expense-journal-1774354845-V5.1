@@ -1,10 +1,10 @@
 <template>
   <main class="page page--record">
-    <PageHeader title="油耗记录" description="录入平均油耗、里程与油价，自动计算本次耗油量和费用。" />
+    <PageHeader title="耗油记录" description="录入平均油耗、里程与油价，自动计算本次耗油量和费用。" />
 
     <section class="record-layout">
       <article class="card form-card">
-        <h2>油耗记录表单</h2>
+        <h2>耗油记录表单</h2>
         <form class="form-grid" @submit.prevent="saveTripRecord">
           <label>
             平均油耗（L/100km）
@@ -64,7 +64,7 @@
           </datalist>
 
           <p class="hint full-width">本次耗油量自动计算：{{ consumedFuelPreview }}</p>
-          <p class="hint full-width">本次油耗费用自动计算：{{ tripFuelCostPreview }}</p>
+          <p class="hint full-width">本次耗油费用自动计算：{{ tripFuelCostPreview }}</p>
 
           <button class="btn btn--primary full-width" type="submit">保存到本地</button>
         </form>
@@ -72,13 +72,13 @@
 
       <article class="card list-card">
         <div class="list-header">
-          <h2>油耗历史</h2>
+          <h2>耗油历史</h2>
           <div class="inline-actions">
             <button class="btn btn--ghost" @click="exportTripJson">导出 JSON</button>
             <button class="btn btn--ghost" @click="exportTripCsv">导出 CSV</button>
             <button class="btn btn--ghost" @click="openImportDialog">导入 JSON</button>
             <button class="btn btn--ghost" :disabled="isSyncingFromGithub" @click="syncFromGithub">
-              {{ isSyncingFromGithub ? '拉取中...' : '从 GitHub 拉取油耗历史' }}
+              {{ isSyncingFromGithub ? '拉取中...' : '从 GitHub 拉取耗油历史' }}
             </button>
           </div>
           <input
@@ -199,7 +199,7 @@
           </li>
         </ul>
 
-        <p v-else class="muted">暂无符合筛选条件的油耗记录。</p>
+        <p v-else class="muted">暂无符合筛选条件的耗油记录。</p>
       </article>
     </section>
   </main>
@@ -451,7 +451,7 @@ function saveTripRecord(): void {
       endLocation: form.endLocation,
       note: form.note,
     });
-    store.showToast('油耗记录已保存到本地。', 'success');
+    store.showToast('耗油记录已保存到本地。', 'success');
   } catch (error) {
     store.showToast(error instanceof Error ? error.message : '保存失败。', 'error');
   }
@@ -512,7 +512,7 @@ function saveEditRecord(recordId: string): void {
 }
 
 function removeRecord(recordId: string): void {
-  if (!window.confirm('确认删除该油耗记录吗？')) {
+  if (!window.confirm('确认删除该耗油记录吗？')) {
     return;
   }
 
@@ -521,7 +521,7 @@ function removeRecord(recordId: string): void {
   if (editingRecordId.value === recordId) {
     editingRecordId.value = null;
   }
-  store.showToast('油耗记录已删除。', 'info');
+  store.showToast('耗油记录已删除。', 'info');
 }
 
 function isSubmitting(recordId: string): boolean {
@@ -651,7 +651,7 @@ async function syncFromGithub(): Promise<void> {
     const result = await store.syncRecordsFromGithub('trip');
 
     if (result.fetched === 0) {
-      store.showToast('GitHub 目录暂无可导入的油耗记录。', 'info');
+      store.showToast('GitHub 目录暂无可导入的耗油记录。', 'info');
       return;
     }
 
@@ -665,7 +665,7 @@ async function syncFromGithub(): Promise<void> {
 
 function exportTripJson(): void {
   if (!filteredRecords.value.length) {
-    store.showToast('暂无可导出的油耗记录。', 'info');
+    store.showToast('暂无可导出的耗油记录。', 'info');
     return;
   }
 
@@ -675,7 +675,7 @@ function exportTripJson(): void {
 
 function exportTripCsv(): void {
   if (!filteredRecords.value.length) {
-    store.showToast('暂无可导出的油耗记录。', 'info');
+    store.showToast('暂无可导出的耗油记录。', 'info');
     return;
   }
 

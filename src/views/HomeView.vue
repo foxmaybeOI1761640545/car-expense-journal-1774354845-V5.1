@@ -4,11 +4,11 @@
       <div>
         <p class="eyebrow">出行手账</p>
         <h1>用车记录本</h1>
-        <p class="subtitle">记录加油、油耗与车辆剩余油量估算</p>
+        <p class="subtitle">记录加油、耗油与车辆剩余油量估算</p>
       </div>
       <div class="quick-actions">
         <button class="btn btn--primary btn--large" @click="router.push('/fuel')">加油记录</button>
-        <button class="btn btn--secondary btn--large" @click="router.push('/trip')">油耗记录</button>
+        <button class="btn btn--secondary btn--large" @click="router.push('/trip')">耗油记录</button>
         <button class="btn btn--secondary btn--large" :disabled="isSubmittingAll || !pendingRecordCount" @click="submitAllPendingRecords">
           {{ isSubmittingAll ? '提交中...' : `一键提交未提交（${pendingRecordCount}）` }}
         </button>
@@ -76,7 +76,7 @@
       </article>
 
       <article class="card summary-card">
-        <h2>最近一次油耗</h2>
+        <h2>最近一次耗油</h2>
         <template v-if="latestTripRecord">
           <p>{{ toLocalDateTime(latestTripRecord.occurredAt) }}</p>
           <p>{{ latestTripRecord.distanceKm.toFixed(2) }} km · {{ latestTripRecord.consumedFuelLiters.toFixed(3) }} L</p>
@@ -87,7 +87,7 @@
             <span class="route-point">{{ latestTripRecord.endLocation || '未填终点' }}</span>
           </p>
         </template>
-        <p v-else class="muted">暂无油耗记录</p>
+        <p v-else class="muted">暂无耗油记录</p>
       </article>
 
       <article class="card totals-card">
@@ -117,7 +117,7 @@
         <ul v-if="recentThreeRecords.length" class="record-list">
           <li v-for="record in recentThreeRecords" :key="record.id">
             <button class="link-like" @click="jumpToRecord(record)">
-              <span>{{ record.type === 'fuel' ? '加油' : '油耗' }}</span>
+              <span>{{ record.type === 'fuel' ? '加油' : '耗油' }}</span>
               <span>{{ toLocalDateTime(record.occurredAt) }}</span>
               <span v-if="record.type === 'fuel'">{{ record.fuelVolumeLiters.toFixed(3) }} L</span>
               <span v-else>{{ record.distanceKm.toFixed(2) }} km</span>
@@ -162,7 +162,7 @@
             <input v-model="settings.defaultFuelNote" type="text" />
           </label>
           <label>
-            默认油耗备注
+            默认耗油备注
             <input v-model="settings.defaultTripNote" type="text" />
           </label>
           <label>

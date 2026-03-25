@@ -16,7 +16,7 @@
 }
 
 export const DEFAULT_APP_CONFIG: AppConfig = {
-  pageTitle: '行驶油耗记录',
+  pageTitle: '行驶耗油记录',
   pageFavicon: 'favicon.svg',
   defaultProvince: '广东',
   defaultFuelType: 92,
