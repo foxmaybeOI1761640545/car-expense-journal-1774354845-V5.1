@@ -41,6 +41,10 @@
           <input v-model="settings.defaultTripNote" type="text" />
         </label>
         <label>
+          设备名称
+          <input v-model="deviceNameInput" type="text" maxlength="80" placeholder="如：我的手机 / 家里电脑" />
+        </label>
+        <label>
           GitHub Owner
           <input v-model="settings.githubOwner" type="text" placeholder="your-name" />
         </label>
@@ -78,6 +82,7 @@
           <span>清空缓存时同时清除本地 PAT</span>
         </label>
         <p class="hint full-width">{{ configPriorityEffectText }}</p>
+        <p class="hint full-width">当前设备 ID：{{ currentDeviceIdText }}</p>
         <p class="hint full-width">{{ githubTokenStatusText }}</p>
         <button class="btn btn--primary full-width" type="submit">保存设置</button>
         <button class="btn btn--danger full-width" type="button" :disabled="isClearingLocalCache" @click="clearLocalCache">
@@ -98,6 +103,7 @@ import { parsePositiveNumber, roundTo } from '../utils/number';
 
 const store = useAppStore();
 const githubTokenInput = ref('');
+const deviceNameInput = ref('');
 const clearGithubTokenOnSave = ref(false);
 const clearPatWhenClearingCache = ref(false);
 const isClearingLocalCache = ref(false);
@@ -110,6 +116,14 @@ watch(
     Object.assign(settings, value);
   },
   { immediate: true, deep: true },
+);
+
+watch(
+  () => store.state.deviceMeta.deviceName,
+  (value) => {
+    deviceNameInput.value = value;
+  },
+  { immediate: true },
 );
 
 const configPriorityModeText = computed(() =>
@@ -130,6 +144,13 @@ const githubTokenStatusText = computed(() => {
   }
 
   return store.state.githubToken ? 'Token 状态：本地已保存（已转换存储）。' : 'Token 状态：当前未保存。';
+});
+const currentDeviceIdText = computed(() => {
+  const value = store.state.deviceMeta.deviceId.trim();
+  if (!value) {
+    return '未生成';
+  }
+  return value.length <= 18 ? value : `${value.slice(0, 10)}...${value.slice(-6)}`;
 });
 
 function saveSettings(): void {
@@ -152,6 +173,7 @@ function saveSettings(): void {
     githubRecordsDir: settings.githubRecordsDir.trim() || 'data/records',
     preferConfigOverLocalStorage: settings.preferConfigOverLocalStorage,
   });
+  store.updateDeviceName(deviceNameInput.value);
 
   let tokenMessage = 'Token 未变更。';
 

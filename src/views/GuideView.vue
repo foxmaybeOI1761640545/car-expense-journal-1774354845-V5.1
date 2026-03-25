@@ -32,6 +32,16 @@
       </article>
 
       <article class="card guide-card">
+        <h2>多设备同步规则</h2>
+        <ul class="guide-list">
+          <li>当前设备会生成本地设备身份（设备名称 + 设备 ID），可在页面设置中重命名设备。</li>
+          <li>用户资料按设备隔离存储：<code>user-profile/devices/&lt;deviceId&gt;/profile.json</code>。</li>
+          <li>记录按全局共享存储：<code>records/&lt;recordId&gt;.json</code>，删除会写入 <code>record-tombstones/&lt;recordId&gt;.json</code>。</li>
+          <li>拉取时会自动合并“最新记录 + 删除标记”，确保多端新增、修改、删除最终一致。</li>
+        </ul>
+      </article>
+
+      <article class="card guide-card">
         <h2>常见排查</h2>
         <ul class="guide-list">
           <li>修改配置文件后页面未变化：通常是 localStorage 优先模式覆盖了配置文件。</li>

@@ -1,10 +1,12 @@
 import type { AppConfig } from '../types/config';
+import type { DeviceMeta } from '../types/device';
 import type { UserProfile } from '../types/profile';
-import type { AppRecord } from '../types/records';
+import type { AppRecord, RecordTombstone } from '../types/records';
 import type { FuelBalanceAdjustmentLog, FuelBalanceState } from '../types/store';
 
 const APP_DATA_KEY = 'car-journal-app-data-v1';
 const APP_CONFIG_KEY = 'car-journal-config-v1';
+const DEVICE_META_KEY = 'car-journal-device-meta-v1';
 
 interface LegacyLocalConfigWithToken extends Partial<AppConfig> {
   githubToken?: unknown;
@@ -13,6 +15,7 @@ interface LegacyLocalConfigWithToken extends Partial<AppConfig> {
 export interface PersistedAppData {
   userProfile: UserProfile;
   records: AppRecord[];
+  recordTombstones: RecordTombstone[];
   fuelBalance: FuelBalanceState;
   fuelBalanceAdjustments: FuelBalanceAdjustmentLog[];
 }
@@ -53,6 +56,18 @@ export function saveLocalConfig(config: AppConfig): void {
 
 export function clearLocalConfig(): void {
   localStorage.removeItem(APP_CONFIG_KEY);
+}
+
+export function loadDeviceMeta(): Partial<DeviceMeta> | null {
+  return safeParse<Partial<DeviceMeta>>(localStorage.getItem(DEVICE_META_KEY));
+}
+
+export function saveDeviceMeta(deviceMeta: DeviceMeta): void {
+  localStorage.setItem(DEVICE_META_KEY, JSON.stringify(deviceMeta));
+}
+
+export function clearDeviceMeta(): void {
+  localStorage.removeItem(DEVICE_META_KEY);
 }
 
 export function loadLegacyGithubTokenFromLocalConfig(): string | null {

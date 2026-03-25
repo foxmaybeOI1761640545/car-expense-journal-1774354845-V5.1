@@ -1,4 +1,4 @@
-﻿export type RecordType = 'fuel' | 'trip';
+export type RecordType = 'fuel' | 'trip';
 
 export interface BaseRecord {
   id: string;
@@ -7,6 +7,10 @@ export interface BaseRecord {
   occurredAtUnix: number;
   createdAt: string;
   createdAtUnix: number;
+  updatedAt: string;
+  updatedAtUnix: number;
+  sourceDeviceId?: string;
+  sourceDeviceName?: string;
   note?: string;
   submittedToGithub: boolean;
   githubSubmittedTargets: string[];
@@ -34,3 +38,15 @@ export interface TripRecord extends BaseRecord {
 }
 
 export type AppRecord = FuelRecord | TripRecord;
+
+export interface RecordTombstone {
+  recordId: string;
+  recordType: RecordType;
+  deletedAt: string;
+  deletedAtUnix: number;
+  sourceDeviceId?: string;
+  sourceDeviceName?: string;
+  submittedToGithub: boolean;
+  githubSubmittedTargets: string[];
+  githubPath?: string;
+}

@@ -1,8 +1,7 @@
 import type { AppConfig } from '../types/config';
 import type { AvatarStyle } from '../types/profile';
-import type { AppRecord } from '../types/records';
+import type { AppRecord, RecordTombstone, RecordType } from '../types/records';
 import type { FuelBalanceAdjustmentLog } from '../types/store';
-import { nowUnixSeconds } from '../utils/date';
 
 interface GithubSubmitResult {
   path: string;
@@ -37,13 +36,34 @@ interface FuelBalanceAdjustmentGithubEntry {
   manualOffsetLiters: number;
 }
 
+export interface GithubRecordTombstonePayload {
+  recordId: string;
+  recordType?: RecordType;
+  deletedAt: string;
+  deletedAtUnix: number;
+  sourceDeviceId?: string;
+  sourceDeviceName?: string;
+}
+
+export interface GithubRecordsBundle {
+  records: unknown[];
+  tombstones: GithubRecordTombstonePayload[];
+  fetched: number;
+}
+
 const LEGACY_FUEL_BALANCE_ADJUSTMENTS_FILE = 'fuel-balance-adjustments.json';
 const FUEL_BALANCE_ADJUSTMENTS_DIR = 'fuel-balance-adjustments';
+const RECORDS_V2_DIR = 'records';
+const RECORD_TOMBSTONES_DIR = 'record-tombstones';
 const USER_PROFILE_DIR = 'user-profile';
+const USER_PROFILE_DEVICES_DIR = 'devices';
 const USER_AVATAR_DIR = 'avatars';
 const USER_PROFILE_FILE = 'profile.json';
 
 export interface GithubUserProfilePayload {
+  schemaVersion?: number;
+  deviceId?: string;
+  deviceName?: string;
   displayName: string;
   email?: string;
   phone?: string;
@@ -84,6 +104,11 @@ function normalizeRecordsDir(dir: string): string {
   return dir.replace(/^\/+|\/+$/g, '');
 }
 
+function normalizeDeviceId(deviceId?: string): string | undefined {
+  const value = deviceId?.trim();
+  return value ? value : undefined;
+}
+
 function encodeContentPath(path: string): string {
   return path
     .split('/')
@@ -96,7 +121,7 @@ function validateGithubConfig(config: AppConfig, token: string): void {
   const missing = requiredFields.filter((field) => !String(config[field] ?? '').trim());
 
   if (missing.length > 0 || !token.trim()) {
-    throw new Error('GitHub 配置不完整，请先在首页设置 owner/repo/token/recordsDir。');
+    throw new Error('GitHub 配置不完整，请先填写 owner/repo/token/recordsDir。');
   }
 }
 
@@ -166,15 +191,33 @@ function normalizeRecordPayload(value: unknown): unknown[] {
 
   if (value && typeof value === 'object') {
     const maybeWithRecords = value as { records?: unknown };
-
     if (Array.isArray(maybeWithRecords.records)) {
       return maybeWithRecords.records;
     }
-
     return [value];
   }
 
   return [];
+}
+
+function normalizeRecordTombstonePayload(raw: unknown): GithubRecordTombstonePayload | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw as Partial<GithubRecordTombstonePayload>;
+  if (typeof value.recordId !== 'string' || typeof value.deletedAt !== 'string' || !Number.isFinite(value.deletedAtUnix)) {
+    return null;
+  }
+
+  return {
+    recordId: value.recordId.trim(),
+    recordType: value.recordType === 'fuel' || value.recordType === 'trip' ? value.recordType : undefined,
+    deletedAt: value.deletedAt.trim(),
+    deletedAtUnix: Number(value.deletedAtUnix),
+    sourceDeviceId: normalizeOptionalText(value.sourceDeviceId),
+    sourceDeviceName: normalizeOptionalText(value.sourceDeviceName),
+  };
 }
 
 function normalizeFuelBalanceAdjustmentPayload(value: unknown): FuelBalanceAdjustmentGithubEntry[] {
@@ -248,57 +291,6 @@ function toFuelBalanceAdjustmentGithubEntry(log: FuelBalanceAdjustmentLog): Fuel
   };
 }
 
-export async function submitRecordToGithub(record: AppRecord, config: AppConfig, token: string): Promise<GithubSubmitResult> {
-  validateGithubConfig(config, token);
-
-  const unixTime = nowUnixSeconds();
-  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
-  const path = `${recordsDir}/${unixTime}-${record.id}.json`;
-  const endpoint = makeGithubEndpoint(config, path);
-
-  const payload: {
-    message: string;
-    content: string;
-    branch?: string;
-  } = {
-    message: `chore(records): add ${record.type} record ${unixTime}`,
-    content: toBase64Utf8(JSON.stringify(record, null, 2)),
-  };
-
-  const branch = config.githubBranch.trim();
-  if (branch) {
-    payload.branch = branch;
-  }
-
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers: makeGithubHeaders(token),
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
-    const message = body.message ?? `HTTP ${response.status}`;
-    const lowerMessage = message.toLowerCase();
-    const conflict =
-      (response.status === 409 || response.status === 422) &&
-      (lowerMessage.includes('exist') || (lowerMessage.includes('sha') && lowerMessage.includes('suppl')));
-
-    if (conflict) {
-      throw new Error('同一秒内重复提交，请稍后重试');
-    }
-
-    throw new Error(`GitHub 提交失败：${message}`);
-  }
-
-  const data = (await response.json()) as { content?: { path?: string; sha?: string } };
-
-  return {
-    path: data.content?.path ?? path,
-    sha: data.content?.sha,
-  };
-}
-
 async function fetchGithubJson<T>(endpoint: string, token: string): Promise<T> {
   const response = await fetch(endpoint, {
     method: 'GET',
@@ -312,6 +304,33 @@ async function fetchGithubJson<T>(endpoint: string, token: string): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+async function fetchGithubDirectoryItems(
+  config: AppConfig,
+  token: string,
+  path: string,
+  options: { allowNotFound?: boolean } = {},
+): Promise<GithubContentItem[]> {
+  const refQuery = makeRefQuery(config);
+  const endpoint = `${makeGithubEndpoint(config, path)}${refQuery}`;
+  const response = await fetch(endpoint, {
+    method: 'GET',
+    headers: makeGithubHeaders(token),
+  });
+
+  if (response.status === 404 && options.allowNotFound) {
+    return [];
+  }
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${response.status}`;
+    throw new Error(`GitHub 读取失败：${message}`);
+  }
+
+  const body = (await response.json()) as GithubContentItem[] | GithubContentItem;
+  return Array.isArray(body) ? body : [body];
 }
 
 async function fetchGithubFileBody(
@@ -340,60 +359,51 @@ async function fetchGithubFileBody(
   return (await response.json()) as GithubContentFileBody;
 }
 
-export async function fetchRecordsFromGithub(config: AppConfig, token: string): Promise<unknown[]> {
-  validateGithubConfig(config, token);
-
-  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+async function fetchAndParseJsonFile(config: AppConfig, token: string, path: string): Promise<unknown> {
   const refQuery = makeRefQuery(config);
-  const listEndpoint = `${makeGithubEndpoint(config, recordsDir)}${refQuery}`;
-  const listBody = await fetchGithubJson<GithubContentItem[] | GithubContentItem>(listEndpoint, token);
-  const items = Array.isArray(listBody) ? listBody : [listBody];
+  const endpoint = `${makeGithubEndpoint(config, path)}${refQuery}`;
+  const fileBody = await fetchGithubJson<GithubContentFileBody>(endpoint, token);
 
-  const jsonFiles = items
-    .filter(
-      (item) =>
-        item.type === 'file' &&
-        item.name.toLowerCase().endsWith('.json') &&
-        item.name.toLowerCase() !== LEGACY_FUEL_BALANCE_ADJUSTMENTS_FILE,
-    )
-    .sort((a, b) => a.path.localeCompare(b.path));
-
-  if (jsonFiles.length === 0) {
-    return [];
+  if (fileBody.encoding !== 'base64' || typeof fileBody.content !== 'string') {
+    throw new Error(`GitHub 文件格式不支持：${path}`);
   }
 
-  const records: unknown[] = [];
-
-  for (const item of jsonFiles) {
-    const fileEndpoint = `${makeGithubEndpoint(config, item.path)}${refQuery}`;
-    const fileBody = await fetchGithubJson<GithubContentFileBody>(fileEndpoint, token);
-
-    if (fileBody.encoding !== 'base64' || typeof fileBody.content !== 'string') {
-      throw new Error(`GitHub 文件格式不支持：${item.path}`);
-    }
-
-    let parsed: unknown;
-
-    try {
-      parsed = JSON.parse(fromBase64Utf8(fileBody.content));
-    } catch {
-      throw new Error(`GitHub 文件不是有效 JSON：${item.path}`);
-    }
-
-    records.push(...normalizeRecordPayload(parsed));
+  try {
+    return JSON.parse(fromBase64Utf8(fileBody.content));
+  } catch {
+    throw new Error(`GitHub 文件不是有效 JSON：${path}`);
   }
-
-  return records;
 }
 
-function getUserProfilePath(config: AppConfig): string {
+function getLegacyUserProfilePath(config: AppConfig): string {
   const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
   return `${recordsDir}/${USER_PROFILE_DIR}/${USER_PROFILE_FILE}`;
 }
 
-function makeUserAvatarPath(config: AppConfig, extension: string, unixTime: number): string {
+function getDeviceUserProfilePath(config: AppConfig, deviceId: string): string {
   const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  return `${recordsDir}/${USER_PROFILE_DIR}/${USER_PROFILE_DEVICES_DIR}/${deviceId}/${USER_PROFILE_FILE}`;
+}
+
+function makeUserAvatarPath(config: AppConfig, extension: string, unixTime: number, deviceId?: string): string {
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  const normalizedDeviceId = normalizeDeviceId(deviceId);
+
+  if (normalizedDeviceId) {
+    return `${recordsDir}/${USER_PROFILE_DIR}/${USER_PROFILE_DEVICES_DIR}/${normalizedDeviceId}/${USER_AVATAR_DIR}/avatar-${unixTime}.${extension}`;
+  }
+
   return `${recordsDir}/${USER_PROFILE_DIR}/${USER_AVATAR_DIR}/avatar-${unixTime}.${extension}`;
+}
+
+function getRecordPath(config: AppConfig, recordId: string): string {
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  return `${recordsDir}/${RECORDS_V2_DIR}/${recordId}.json`;
+}
+
+function getRecordTombstonePath(config: AppConfig, recordId: string): string {
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  return `${recordsDir}/${RECORD_TOMBSTONES_DIR}/${recordId}.json`;
 }
 
 function normalizeDataUrlForGithubAvatar(dataUrl: string): { base64: string; extension: string } {
@@ -401,11 +411,10 @@ function normalizeDataUrlForGithubAvatar(dataUrl: string): { base64: string; ext
   const match = /^data:(image\/(?:png|jpeg));base64,([a-z0-9+/=\r\n]+)$/i.exec(normalized);
 
   if (!match) {
-    throw new Error('头像格式无效，仅支持 PNG/JPEG 的 base64 Data URL');
+    throw new Error('头像格式无效，仅支持 PNG/JPEG 的 base64 Data URL。');
   }
 
   const extension = match[1].toLowerCase() === 'image/png' ? 'png' : 'jpg';
-
   return {
     base64: match[2].replace(/[\r\n]/g, ''),
     extension,
@@ -422,7 +431,12 @@ function normalizeUserProfilePayload(raw: unknown): GithubUserProfilePayload | n
     return null;
   }
 
+  const schemaVersion = Number.isFinite(value.schemaVersion) ? Number(value.schemaVersion) : undefined;
+
   return {
+    schemaVersion: schemaVersion === undefined ? undefined : Math.max(1, Math.floor(schemaVersion)),
+    deviceId: normalizeOptionalText(value.deviceId),
+    deviceName: normalizeOptionalText(value.deviceName),
     displayName: value.displayName.trim(),
     email: normalizeOptionalText(value.email),
     phone: normalizeOptionalText(value.phone),
@@ -436,12 +450,161 @@ function normalizeUserProfilePayload(raw: unknown): GithubUserProfilePayload | n
   };
 }
 
-export async function uploadUserAvatarToGithub(dataUrl: string, config: AppConfig, token: string): Promise<GithubSubmitResult> {
+export async function submitRecordToGithub(record: AppRecord, config: AppConfig, token: string): Promise<GithubSubmitResult> {
   validateGithubConfig(config, token);
 
-  const unixTime = nowUnixSeconds();
+  const path = getRecordPath(config, record.id);
+  const endpoint = makeGithubEndpoint(config, path);
+  const currentBody = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
+  const payload = makePutPayload(
+    {
+      message: `chore(records): upsert ${record.type} record ${record.id}`,
+      content: toBase64Utf8(JSON.stringify(record, null, 2)),
+      sha: currentBody?.sha,
+    },
+    config,
+  );
+
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: makeGithubHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${response.status}`;
+    throw new Error(`GitHub 提交失败：${message}`);
+  }
+
+  const data = (await response.json()) as { content?: { path?: string; sha?: string } };
+  return {
+    path: data.content?.path ?? path,
+    sha: data.content?.sha,
+  };
+}
+
+export async function submitRecordTombstoneToGithub(
+  tombstone: RecordTombstone,
+  config: AppConfig,
+  token: string,
+): Promise<GithubSubmitResult> {
+  validateGithubConfig(config, token);
+
+  const path = getRecordTombstonePath(config, tombstone.recordId);
+  const endpoint = makeGithubEndpoint(config, path);
+  const currentBody = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
+
+  let currentSha = currentBody?.sha;
+  if (currentBody?.encoding === 'base64' && typeof currentBody.content === 'string') {
+    try {
+      const parsed = JSON.parse(fromBase64Utf8(currentBody.content));
+      const existing = normalizeRecordTombstonePayload(parsed);
+      if (existing && existing.deletedAtUnix > tombstone.deletedAtUnix) {
+        return {
+          path,
+          sha: currentSha,
+        };
+      }
+    } catch {
+      // ignore invalid current content and overwrite with normalized tombstone payload
+    }
+  }
+
+  const payload = makePutPayload(
+    {
+      message: `chore(records): tombstone ${tombstone.recordId}`,
+      content: toBase64Utf8(
+        JSON.stringify(
+          {
+            recordId: tombstone.recordId,
+            recordType: tombstone.recordType,
+            deletedAt: tombstone.deletedAt,
+            deletedAtUnix: tombstone.deletedAtUnix,
+            sourceDeviceId: tombstone.sourceDeviceId,
+            sourceDeviceName: tombstone.sourceDeviceName,
+          },
+          null,
+          2,
+        ),
+      ),
+      sha: currentSha,
+    },
+    config,
+  );
+
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: makeGithubHeaders(token),
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${response.status}`;
+    throw new Error(`GitHub 提交失败：${message}`);
+  }
+
+  const data = (await response.json()) as { content?: { path?: string; sha?: string } };
+  return {
+    path: data.content?.path ?? path,
+    sha: data.content?.sha,
+  };
+}
+
+export async function fetchRecordsFromGithub(config: AppConfig, token: string): Promise<GithubRecordsBundle> {
+  validateGithubConfig(config, token);
+
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  const rootItems = await fetchGithubDirectoryItems(config, token, recordsDir, { allowNotFound: true });
+
+  const legacyRecordFiles = rootItems.filter(
+    (item) => item.type === 'file' && item.name.toLowerCase().endsWith('.json') && item.name.toLowerCase() !== LEGACY_FUEL_BALANCE_ADJUSTMENTS_FILE,
+  );
+
+  const v2RecordDirPath = `${recordsDir}/${RECORDS_V2_DIR}`;
+  const v2RecordItems = await fetchGithubDirectoryItems(config, token, v2RecordDirPath, { allowNotFound: true });
+  const v2RecordFiles = v2RecordItems.filter((item) => item.type === 'file' && item.name.toLowerCase().endsWith('.json'));
+
+  const recordFiles = [...legacyRecordFiles, ...v2RecordFiles].sort((a, b) => a.path.localeCompare(b.path));
+  const records: unknown[] = [];
+
+  for (const item of recordFiles) {
+    const parsed = await fetchAndParseJsonFile(config, token, item.path);
+    records.push(...normalizeRecordPayload(parsed));
+  }
+
+  const tombstonesDirPath = `${recordsDir}/${RECORD_TOMBSTONES_DIR}`;
+  const tombstoneItems = await fetchGithubDirectoryItems(config, token, tombstonesDirPath, { allowNotFound: true });
+  const tombstoneFiles = tombstoneItems.filter((item) => item.type === 'file' && item.name.toLowerCase().endsWith('.json'));
+  const tombstones: GithubRecordTombstonePayload[] = [];
+
+  for (const item of tombstoneFiles) {
+    const parsed = await fetchAndParseJsonFile(config, token, item.path);
+    const normalized = normalizeRecordTombstonePayload(parsed);
+    if (normalized) {
+      tombstones.push(normalized);
+    }
+  }
+
+  return {
+    records,
+    tombstones,
+    fetched: records.length,
+  };
+}
+
+export async function uploadUserAvatarToGithub(
+  dataUrl: string,
+  config: AppConfig,
+  token: string,
+  deviceId?: string,
+): Promise<GithubSubmitResult> {
+  validateGithubConfig(config, token);
+
+  const unixTime = Math.floor(Date.now() / 1000);
   const avatar = normalizeDataUrlForGithubAvatar(dataUrl);
-  const path = makeUserAvatarPath(config, avatar.extension, unixTime);
+  const path = makeUserAvatarPath(config, avatar.extension, unixTime, deviceId);
   const endpoint = makeGithubEndpoint(config, path);
   const payload = makePutPayload(
     {
@@ -464,7 +627,6 @@ export async function uploadUserAvatarToGithub(dataUrl: string, config: AppConfi
   }
 
   const data = (await response.json()) as { content?: { path?: string; sha?: string } };
-
   return {
     path: data.content?.path ?? path,
     sha: data.content?.sha,
@@ -475,15 +637,17 @@ export async function submitUserProfileToGithub(
   profile: GithubUserProfilePayload,
   config: AppConfig,
   token: string,
+  deviceId?: string,
 ): Promise<GithubSubmitResult> {
   validateGithubConfig(config, token);
 
-  const path = getUserProfilePath(config);
+  const normalizedDeviceId = normalizeDeviceId(deviceId);
+  const path = normalizedDeviceId ? getDeviceUserProfilePath(config, normalizedDeviceId) : getLegacyUserProfilePath(config);
   const endpoint = makeGithubEndpoint(config, path);
   const currentBody = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
   const payload = makePutPayload(
     {
-      message: `chore(profile): update user profile ${nowUnixSeconds()}`,
+      message: `chore(profile): update user profile ${Math.floor(Date.now() / 1000)}`,
       content: toBase64Utf8(JSON.stringify(profile, null, 2)),
       sha: currentBody?.sha,
     },
@@ -509,21 +673,25 @@ export async function submitUserProfileToGithub(
   };
 }
 
-export async function fetchUserProfileFromGithub(config: AppConfig, token: string): Promise<GithubFetchedUserProfile | null> {
+export async function fetchUserProfileFromGithub(
+  config: AppConfig,
+  token: string,
+  deviceId?: string,
+): Promise<GithubFetchedUserProfile | null> {
   validateGithubConfig(config, token);
 
-  const path = getUserProfilePath(config);
+  const normalizedDeviceId = normalizeDeviceId(deviceId);
+  const path = normalizedDeviceId ? getDeviceUserProfilePath(config, normalizedDeviceId) : getLegacyUserProfilePath(config);
   const body = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
   if (!body) {
     return null;
   }
 
   if (body.encoding !== 'base64' || typeof body.content !== 'string') {
-    throw new Error(`GitHub 鏂囦欢鏍煎紡涓嶆敮鎸侊細${path}`);
+    throw new Error(`GitHub 用户资料文件格式不支持：${path}`);
   }
 
   let parsed: unknown;
-
   try {
     parsed = JSON.parse(fromBase64Utf8(body.content));
   } catch {
@@ -546,12 +714,12 @@ export async function fetchUserAvatarDataUrlFromGithub(avatarPath: string, confi
 
   const normalizedPath = avatarPath.trim();
   if (!normalizedPath) {
-    throw new Error('头像路径不能为空');
+    throw new Error('头像路径不能为空。');
   }
 
   const body = await fetchGithubFileBody(config, token, normalizedPath);
   if (!body || body.encoding !== 'base64' || typeof body.content !== 'string') {
-    throw new Error(`GitHub 鏂囦欢鏍煎紡涓嶆敮鎸侊細${normalizedPath}`);
+    throw new Error(`GitHub 头像文件读取失败：${normalizedPath}`);
   }
 
   const lowerPath = normalizedPath.toLowerCase();
@@ -617,24 +785,14 @@ export async function appendFuelBalanceAdjustmentToGithub(
   }
 
   const payloadEntries = [...currentEntries, toFuelBalanceAdjustmentGithubEntry(adjustment)];
-  const payload: {
-    message: string;
-    content: string;
-    sha?: string;
-    branch?: string;
-  } = {
-    message: `chore(fuel-balance): append adjustment ${adjustment.recordedAtUnix}`,
-    content: toBase64Utf8(JSON.stringify(payloadEntries, null, 2)),
-  };
-
-  if (sha) {
-    payload.sha = sha;
-  }
-
-  const branch = config.githubBranch.trim();
-  if (branch) {
-    payload.branch = branch;
-  }
+  const payload = makePutPayload(
+    {
+      message: `chore(fuel-balance): append adjustment ${adjustment.recordedAtUnix}`,
+      content: toBase64Utf8(JSON.stringify(payloadEntries, null, 2)),
+      sha,
+    },
+    config,
+  );
 
   const response = await fetch(endpoint, {
     method: 'PUT',
@@ -649,7 +807,6 @@ export async function appendFuelBalanceAdjustmentToGithub(
   }
 
   const data = (await response.json()) as { content?: { path?: string; sha?: string } };
-
   return {
     path: data.content?.path ?? path,
     sha: data.content?.sha,

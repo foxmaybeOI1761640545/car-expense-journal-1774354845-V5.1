@@ -84,8 +84,8 @@
           <div class="inline-actions">
             <button class="btn btn--ghost" @click="exportFuelJson">导出 JSON</button>
             <button class="btn btn--ghost" @click="exportFuelCsv">导出 CSV</button>
-            <button class="btn btn--secondary" :disabled="isBatchSubmitting || !pendingFuelRecordIds.length" @click="submitAllPendingFuelRecords">
-              {{ isBatchSubmitting ? '提交中...' : `一键提交未提交（${pendingFuelRecordIds.length}）` }}
+            <button class="btn btn--secondary" :disabled="isBatchSubmitting || pendingFuelChangeCount === 0" @click="submitAllPendingFuelRecords">
+              {{ isBatchSubmitting ? '提交中...' : `一键提交未提交（${pendingFuelChangeCount}）` }}
             </button>
             <button class="btn btn--ghost" :disabled="isSyncingFromGithub" @click="syncFuelFromGithub">
               {{ isSyncingFromGithub ? '拉取中...' : '从 GitHub 拉取加油历史' }}
@@ -277,9 +277,7 @@ const filteredRecords = computed(() => {
   });
 });
 
-const pendingFuelRecordIds = computed(() =>
-  fuelRecords.value.filter((record) => !record.submittedToGithub).map((record) => record.id),
-);
+const pendingFuelChangeCount = computed(() => store.getPendingRecordChangeCount('fuel'));
 
 const consistencyDiff = computed(() => {
   const price = parsePositiveNumber(form.pricePerLiter);
@@ -421,16 +419,20 @@ function saveEditRecord(recordId: string): void {
   }
 }
 
-function removeRecord(recordId: string): void {
+async function removeRecord(recordId: string): Promise<void> {
   if (!window.confirm('确认删除该加油记录吗？')) {
     return;
   }
 
-  store.deleteRecord(recordId);
-  if (editingRecordId.value === recordId) {
-    editingRecordId.value = null;
+  try {
+    await store.deleteRecord(recordId);
+    if (editingRecordId.value === recordId) {
+      editingRecordId.value = null;
+    }
+    store.showToast('加油记录已删除。', 'info');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '删除失败。', 'error');
   }
-  store.showToast('加油记录已删除。', 'info');
 }
 
 function isSubmitting(recordId: string): boolean {
@@ -451,8 +453,8 @@ async function submitAllPendingFuelRecords(): Promise<void> {
     return;
   }
 
-  if (!pendingFuelRecordIds.value.length) {
-    store.showToast('没有可提交的加油记录。', 'info');
+  if (pendingFuelChangeCount.value === 0) {
+    store.showToast('没有可提交的加油记录变更。', 'info');
     return;
   }
 
@@ -462,13 +464,13 @@ async function submitAllPendingFuelRecords(): Promise<void> {
     const result = await store.submitPendingRecords('fuel');
 
     if (result.successCount > 0 && result.failedCount === 0) {
-      store.showToast(`加油记录提交成功，共 ${result.successCount} 条。`, 'success');
+      store.showToast(`加油记录变更提交成功，共 ${result.successCount} 条。`, 'success');
       return;
     }
 
     if (result.successCount > 0) {
       const firstFailure = result.failures[0]?.message ?? '部分记录提交失败。';
-      store.showToast(`加油记录提交完成：成功 ${result.successCount}，失败 ${result.failedCount}。${firstFailure}`, 'info');
+      store.showToast(`加油记录变更提交完成：成功 ${result.successCount}，失败 ${result.failedCount}。${firstFailure}`, 'info');
       return;
     }
 

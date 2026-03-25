@@ -1,8 +1,9 @@
 import { reactive } from 'vue';
 import type { AppConfig } from '../types/config';
 import { DEFAULT_APP_CONFIG } from '../types/config';
+import { DEFAULT_DEVICE_NAME, type DeviceMeta } from '../types/device';
 import { DEFAULT_USER_PROFILE, type AvatarStyle, type UserProfile } from '../types/profile';
-import type { AppRecord, FuelRecord, RecordType, TripRecord } from '../types/records';
+import type { AppRecord, FuelRecord, RecordTombstone, RecordType, TripRecord } from '../types/records';
 import type { AppStoreState, FuelBalanceAdjustmentLog, FuelBalanceState } from '../types/store';
 import { createEmptyFuelBalance, recalculateFuelBalance } from '../services/balanceService';
 import { applyBranding } from '../services/brandingService';
@@ -13,6 +14,7 @@ import {
   fetchUserAvatarDataUrlFromGithub,
   fetchUserProfileFromGithub,
   submitRecordToGithub,
+  submitRecordTombstoneToGithub,
   submitUserProfileToGithub,
   uploadUserAvatarToGithub,
 } from '../services/githubService';
@@ -21,9 +23,11 @@ import {
   clearAppData,
   clearLocalConfig,
   loadAppData,
+  loadDeviceMeta,
   loadLegacyGithubTokenFromLocalConfig,
   loadLocalConfig,
   removeLegacyGithubTokenFromLocalConfig,
+  saveDeviceMeta,
   saveAppData,
   saveLocalConfig,
 } from '../services/localStorageService';
@@ -115,13 +119,34 @@ interface ClearLocalCacheOptions {
 
 let toastTimer: number | null = null;
 const inFlightFuelBalanceAdjustmentSubmissions = new Map<string, Promise<{ path: string; sha?: string }>>();
+const inFlightRecordTombstoneSubmissions = new Map<string, Promise<{ path: string; sha?: string }>>();
+
+function createFallbackDeviceId(): string {
+  const random = Math.random().toString(16).slice(2);
+  return `device-${Date.now().toString(36)}-${random}`;
+}
+
+function createNewDeviceMeta(): DeviceMeta {
+  const now = nowIsoString();
+  const generatedId =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? `device-${crypto.randomUUID()}` : createFallbackDeviceId();
+
+  return {
+    deviceId: generatedId,
+    deviceName: DEFAULT_DEVICE_NAME,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 const state = reactive<AppStoreState>({
   initialized: false,
   config: { ...DEFAULT_APP_CONFIG },
   githubToken: '',
+  deviceMeta: createNewDeviceMeta(),
   userProfile: { ...DEFAULT_USER_PROFILE },
   records: [],
+  recordTombstones: [],
   fuelBalance: createEmptyFuelBalance(),
   fuelBalanceAdjustments: [],
   submittingRecordIds: [],
@@ -156,6 +181,7 @@ function persistState(): void {
   saveAppData({
     userProfile: state.userProfile,
     records: state.records,
+    recordTombstones: state.recordTombstones,
     fuelBalance: state.fuelBalance,
     fuelBalanceAdjustments: state.fuelBalanceAdjustments,
   });
@@ -250,6 +276,26 @@ function normalizeProfileText(value: unknown, maxLength: number): string {
 function normalizeOptionalProfileText(value: unknown, maxLength: number): string | undefined {
   const normalized = normalizeProfileText(value, maxLength);
   return normalized ? normalized : undefined;
+}
+
+function sanitizeDeviceMeta(raw: unknown): DeviceMeta {
+  if (!raw || typeof raw !== 'object') {
+    return createNewDeviceMeta();
+  }
+
+  const value = raw as Partial<DeviceMeta>;
+  const now = nowIsoString();
+  const deviceId = normalizeProfileText(value.deviceId, 120) || createNewDeviceMeta().deviceId;
+  const deviceName = normalizeProfileText(value.deviceName, 80) || DEFAULT_DEVICE_NAME;
+  const createdAt = normalizeProfileText(value.createdAt, 80) || now;
+  const updatedAt = normalizeProfileText(value.updatedAt, 80) || now;
+
+  return {
+    deviceId,
+    deviceName,
+    createdAt,
+    updatedAt,
+  };
 }
 
 function sanitizeUserProfile(raw: unknown): UserProfile {
@@ -362,6 +408,17 @@ function refreshRecordSubmissionStatusForTarget(targetKey: string | null): void 
       };
     })
     .sort(compareRecordsByTimeAsc);
+
+  state.recordTombstones = state.recordTombstones
+    .map((tombstone) => {
+      const targets = normalizeGithubSubmittedTargets(tombstone.githubSubmittedTargets);
+      return {
+        ...tombstone,
+        githubSubmittedTargets: targets,
+        submittedToGithub: targetKey ? targets.includes(targetKey) : Boolean(tombstone.submittedToGithub),
+      };
+    })
+    .sort((a, b) => a.deletedAtUnix - b.deletedAtUnix);
 }
 
 function normalizeOccurredTime(input: {
@@ -416,6 +473,10 @@ function sanitizeRecord(raw: unknown, targetKey: string | null): AppRecord | nul
     githubSubmittedTargets: record.githubSubmittedTargets,
     targetKey,
   });
+  const updatedAt = typeof record.updatedAt === 'string' && record.updatedAt.trim() ? record.updatedAt : record.createdAt;
+  const updatedAtUnix = Number.isFinite(record.updatedAtUnix) ? Math.floor(Number(record.updatedAtUnix)) : Number(record.createdAtUnix);
+  const sourceDeviceId = typeof record.sourceDeviceId === 'string' ? normalizeOptionalProfileText(record.sourceDeviceId, 120) : undefined;
+  const sourceDeviceName = typeof record.sourceDeviceName === 'string' ? normalizeOptionalProfileText(record.sourceDeviceName, 80) : undefined;
 
   if (record.type === 'fuel') {
     const fuelType = parsePositiveNumber(record.fuelType as number);
@@ -440,6 +501,10 @@ function sanitizeRecord(raw: unknown, targetKey: string | null): AppRecord | nul
       occurredAtUnix: normalizedOccurred.occurredAtUnix,
       createdAt: record.createdAt,
       createdAtUnix: Number(record.createdAtUnix),
+      updatedAt,
+      updatedAtUnix,
+      sourceDeviceId,
+      sourceDeviceName,
       province: typeof record.province === 'string' ? record.province : undefined,
       fuelType: Math.round(fuelType),
       pricePerLiter: roundTo(pricePerLiter, 2),
@@ -485,6 +550,10 @@ function sanitizeRecord(raw: unknown, targetKey: string | null): AppRecord | nul
     occurredAtUnix: normalizedOccurred.occurredAtUnix,
     createdAt: record.createdAt,
     createdAtUnix: Number(record.createdAtUnix),
+    updatedAt,
+    updatedAtUnix,
+    sourceDeviceId,
+    sourceDeviceName,
     averageFuelConsumptionPer100Km: roundTo(average, 2),
     distanceKm: roundTo(distance, 2),
     consumedFuelLiters: roundTo(consumed, 3),
@@ -509,6 +578,51 @@ function sanitizeRecords(records: unknown, targetKey: string | null): AppRecord[
     .map((item) => sanitizeRecord(item, targetKey))
     .filter((item): item is AppRecord => item !== null)
     .sort(compareRecordsByTimeAsc);
+}
+
+function sanitizeRecordTombstone(raw: unknown, targetKey: string | null): RecordTombstone | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw as Partial<RecordTombstone>;
+  if (
+    typeof value.recordId !== 'string' ||
+    (value.recordType !== undefined && value.recordType !== 'fuel' && value.recordType !== 'trip') ||
+    typeof value.deletedAt !== 'string' ||
+    !Number.isFinite(value.deletedAtUnix)
+  ) {
+    return null;
+  }
+
+  const submissionState = resolveRecordSubmissionState({
+    submittedToGithub: value.submittedToGithub,
+    githubSubmittedTargets: value.githubSubmittedTargets,
+    targetKey,
+  });
+
+  return {
+    recordId: value.recordId,
+    recordType: value.recordType === 'trip' ? 'trip' : 'fuel',
+    deletedAt: value.deletedAt,
+    deletedAtUnix: Number(value.deletedAtUnix),
+    sourceDeviceId: normalizeOptionalProfileText(value.sourceDeviceId, 120),
+    sourceDeviceName: normalizeOptionalProfileText(value.sourceDeviceName, 80),
+    submittedToGithub: submissionState.submittedToGithub,
+    githubSubmittedTargets: submissionState.githubSubmittedTargets,
+    githubPath: normalizeOptionalProfileText(value.githubPath, 320),
+  };
+}
+
+function sanitizeRecordTombstones(raw: unknown, targetKey: string | null): RecordTombstone[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw
+    .map((item) => sanitizeRecordTombstone(item, targetKey))
+    .filter((item): item is RecordTombstone => item !== null)
+    .sort((a, b) => a.deletedAtUnix - b.deletedAtUnix);
 }
 
 function normalizeImportPayload(raw: unknown): unknown[] {
@@ -575,6 +689,23 @@ function normalizeNullableLiters(value: number | null): number | null {
   }
 
   return roundTo(Number(value), 3);
+}
+
+function getRecordUpdatedAtUnix(record: Pick<AppRecord, 'updatedAtUnix' | 'createdAtUnix'>): number {
+  return Number.isFinite(record.updatedAtUnix) ? Number(record.updatedAtUnix) : Number(record.createdAtUnix);
+}
+
+function makeRecordTombstone(record: AppRecord): RecordTombstone {
+  return {
+    recordId: record.id,
+    recordType: record.type,
+    deletedAt: nowIsoString(),
+    deletedAtUnix: nowUnixSeconds(),
+    sourceDeviceId: state.deviceMeta.deviceId,
+    sourceDeviceName: state.deviceMeta.deviceName,
+    submittedToGithub: false,
+    githubSubmittedTargets: [],
+  };
 }
 
 function isFuelBalanceChanged(previous: FuelBalanceState, next: FuelBalanceState): boolean {
@@ -664,7 +795,12 @@ export async function initializeStore(): Promise<void> {
     return;
   }
 
-  const [fileConfig, localConfig, persistedData] = await Promise.all([loadConfigFile(), Promise.resolve(loadLocalConfig()), Promise.resolve(loadAppData())]);
+  const [fileConfig, localConfig, persistedData, localDeviceMeta] = await Promise.all([
+    loadConfigFile(),
+    Promise.resolve(loadLocalConfig()),
+    Promise.resolve(loadAppData()),
+    Promise.resolve(loadDeviceMeta()),
+  ]);
 
   state.config = resolveAppConfig(fileConfig, localConfig);
   const vaultToken = loadGithubTokenFromVault();
@@ -681,13 +817,30 @@ export async function initializeStore(): Promise<void> {
   }
 
   applyBranding(state.config);
+  state.deviceMeta = sanitizeDeviceMeta(localDeviceMeta);
   state.userProfile = sanitizeUserProfile(persistedData.userProfile);
   state.records = sanitizeRecords(persistedData.records, getCurrentGithubSubmissionTargetKey());
+  state.recordTombstones = sanitizeRecordTombstones(persistedData.recordTombstones, getCurrentGithubSubmissionTargetKey());
+  const activeTombstones = new Map<string, RecordTombstone>();
+  for (const tombstone of state.recordTombstones) {
+    const existing = activeTombstones.get(tombstone.recordId);
+    if (!existing || tombstone.deletedAtUnix >= existing.deletedAtUnix) {
+      activeTombstones.set(tombstone.recordId, tombstone);
+    }
+  }
+  state.records = state.records.filter((record) => {
+    const tombstone = activeTombstones.get(record.id);
+    if (!tombstone) {
+      return true;
+    }
+    return tombstone.deletedAtUnix < getRecordUpdatedAtUnix(record);
+  });
   state.fuelBalance = sanitizeFuelBalance(persistedData.fuelBalance);
   state.fuelBalanceAdjustments = sanitizeFuelBalanceAdjustments(persistedData.fuelBalanceAdjustments);
   state.fuelBalance = recalculateFuelBalance(state.records, state.fuelBalance);
   state.initialized = true;
 
+  saveDeviceMeta(state.deviceMeta);
   persistState();
 }
 
@@ -707,6 +860,17 @@ function updateConfig(partial: Partial<AppConfig>): void {
   }
 }
 
+function updateDeviceName(deviceName: string): void {
+  const normalized = normalizeProfileText(deviceName, 80) || DEFAULT_DEVICE_NAME;
+  const nextMeta: DeviceMeta = {
+    ...state.deviceMeta,
+    deviceName: normalized,
+    updatedAt: nowIsoString(),
+  };
+  state.deviceMeta = nextMeta;
+  saveDeviceMeta(nextMeta);
+}
+
 function saveGithubToken(token: string): void {
   const normalized = token.trim();
   state.githubToken = normalized;
@@ -722,14 +886,17 @@ function saveGithubToken(token: string): void {
 async function clearLocalCache(options: ClearLocalCacheOptions = {}): Promise<void> {
   const clearPat = options.clearPat === true;
   const fileConfig = await loadConfigFile();
+  const preservedDeviceMeta = state.deviceMeta;
 
   clearAppData();
   clearLocalConfig();
 
   state.config = resolveAppConfig(fileConfig, {});
   applyBranding(state.config);
+  state.deviceMeta = preservedDeviceMeta;
   state.userProfile = { ...DEFAULT_USER_PROFILE };
   state.records = [];
+  state.recordTombstones = [];
   state.fuelBalance = createEmptyFuelBalance();
   state.fuelBalanceAdjustments = [];
   state.submittingRecordIds = [];
@@ -742,6 +909,7 @@ async function clearLocalCache(options: ClearLocalCacheOptions = {}): Promise<vo
     state.githubToken = loadGithubTokenFromVault();
   }
 
+  saveDeviceMeta(state.deviceMeta);
   persistState();
 }
 
@@ -782,6 +950,8 @@ function clearUserProfileAvatar(): void {
 async function syncUserProfileToGithub(): Promise<SyncUserProfileToGithubResult> {
   const profileSnapshot = sanitizeUserProfile(state.userProfile);
   const now = nowIsoString();
+  const deviceId = state.deviceMeta.deviceId;
+  const deviceName = state.deviceMeta.deviceName;
 
   let avatarPath = profileSnapshot.avatarGithubPath;
   let avatarUpdatedAt = profileSnapshot.avatarUpdatedAt;
@@ -789,7 +959,7 @@ async function syncUserProfileToGithub(): Promise<SyncUserProfileToGithubResult>
 
   if (profileSnapshot.avatarDataUrl) {
     if (profileSnapshot.avatarNeedsUpload || !avatarPath) {
-      const avatarResult = await uploadUserAvatarToGithub(profileSnapshot.avatarDataUrl, state.config, state.githubToken);
+      const avatarResult = await uploadUserAvatarToGithub(profileSnapshot.avatarDataUrl, state.config, state.githubToken, deviceId);
       avatarPath = avatarResult.path;
       avatarUpdatedAt = now;
       avatarMimeType = parseAvatarMimeTypeFromDataUrl(profileSnapshot.avatarDataUrl) || avatarMimeType;
@@ -801,6 +971,9 @@ async function syncUserProfileToGithub(): Promise<SyncUserProfileToGithubResult>
   }
 
   const profilePayload = {
+    schemaVersion: 2,
+    deviceId,
+    deviceName: normalizeOptionalText(deviceName),
     displayName: profileSnapshot.displayName,
     email: normalizeOptionalText(profileSnapshot.email),
     phone: normalizeOptionalText(profileSnapshot.phone),
@@ -813,7 +986,7 @@ async function syncUserProfileToGithub(): Promise<SyncUserProfileToGithubResult>
     updatedAt: now,
   };
 
-  const profileResult = await submitUserProfileToGithub(profilePayload, state.config, state.githubToken);
+  const profileResult = await submitUserProfileToGithub(profilePayload, state.config, state.githubToken, deviceId);
 
   state.userProfile = sanitizeUserProfile({
     ...profileSnapshot,
@@ -833,7 +1006,8 @@ async function syncUserProfileToGithub(): Promise<SyncUserProfileToGithubResult>
 }
 
 async function syncUserProfileFromGithub(): Promise<SyncUserProfileFromGithubResult> {
-  const fetched = await fetchUserProfileFromGithub(state.config, state.githubToken);
+  const deviceId = state.deviceMeta.deviceId;
+  const fetched = (await fetchUserProfileFromGithub(state.config, state.githubToken, deviceId)) ?? (await fetchUserProfileFromGithub(state.config, state.githubToken));
   if (!fetched) {
     return {
       exists: false,
@@ -897,6 +1071,10 @@ function addFuelRecord(input: FuelRecordInput): FuelRecord {
     occurredAtUnix: occurred.occurredAtUnix,
     createdAt,
     createdAtUnix,
+    updatedAt: createdAt,
+    updatedAtUnix: createdAtUnix,
+    sourceDeviceId: state.deviceMeta.deviceId,
+    sourceDeviceName: state.deviceMeta.deviceName,
     province: input.province?.trim() || undefined,
     fuelType: Math.round(fuelType),
     pricePerLiter: roundTo(price, 2),
@@ -943,6 +1121,10 @@ function addTripRecord(input: TripRecordInput): TripRecord {
     occurredAtUnix: occurred.occurredAtUnix,
     createdAt,
     createdAtUnix,
+    updatedAt: createdAt,
+    updatedAtUnix: createdAtUnix,
+    sourceDeviceId: state.deviceMeta.deviceId,
+    sourceDeviceName: state.deviceMeta.deviceName,
     averageFuelConsumptionPer100Km: roundTo(average, 2),
     distanceKm: roundTo(distance, 2),
     consumedFuelLiters,
@@ -968,12 +1150,12 @@ function updateFuelRecord(recordId: string, input: FuelRecordInput): UpdateRecor
   const index = state.records.findIndex((record) => record.id === recordId);
 
   if (index < 0) {
-    throw new Error('???????????');
+    throw new Error('未找到对应的加油记录。');
   }
 
   const current = state.records[index];
   if (current.type !== 'fuel') {
-    throw new Error('?????????????????');
+    throw new Error('记录类型不匹配，无法更新加油记录。');
   }
 
   const fuelType = parsePositiveNumber(input.fuelType);
@@ -982,7 +1164,7 @@ function updateFuelRecord(recordId: string, input: FuelRecordInput): UpdateRecor
   const total = parsePositiveNumber(input.totalPriceCny);
 
   if (fuelType === null || price === null || volume === null || total === null) {
-    throw new Error('???????????????');
+    throw new Error('加油记录存在无效数值，请检查。');
   }
 
   const occurred = normalizeOccurredTime({
@@ -995,6 +1177,10 @@ function updateFuelRecord(recordId: string, input: FuelRecordInput): UpdateRecor
     ...current,
     occurredAt: occurred.occurredAt,
     occurredAtUnix: occurred.occurredAtUnix,
+    updatedAt: nowIsoString(),
+    updatedAtUnix: nowUnixSeconds(),
+    sourceDeviceId: state.deviceMeta.deviceId,
+    sourceDeviceName: state.deviceMeta.deviceName,
     province: normalizeOptionalText(input.province),
     fuelType: Math.round(fuelType),
     pricePerLiter: roundTo(price, 2),
@@ -1044,12 +1230,12 @@ function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecor
   const index = state.records.findIndex((record) => record.id === recordId);
 
   if (index < 0) {
-    throw new Error('???????????');
+    throw new Error('未找到对应的耗油记录。');
   }
 
   const current = state.records[index];
   if (current.type !== 'trip') {
-    throw new Error('?????????????????');
+    throw new Error('记录类型不匹配，无法更新耗油记录。');
   }
 
   const average = parsePositiveNumber(input.averageFuelConsumptionPer100Km);
@@ -1057,7 +1243,7 @@ function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecor
   const price = parsePositiveNumber(input.pricePerLiter);
 
   if (average === null || distance === null || price === null) {
-    throw new Error('???????????????');
+    throw new Error('耗油记录存在无效数值，请检查。');
   }
 
   const consumedFuelLiters = roundTo((distance / 100) * average, 3);
@@ -1072,6 +1258,10 @@ function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecor
     ...current,
     occurredAt: occurred.occurredAt,
     occurredAtUnix: occurred.occurredAtUnix,
+    updatedAt: nowIsoString(),
+    updatedAtUnix: nowUnixSeconds(),
+    sourceDeviceId: state.deviceMeta.deviceId,
+    sourceDeviceName: state.deviceMeta.deviceName,
     averageFuelConsumptionPer100Km: roundTo(average, 2),
     distanceKm: roundTo(distance, 2),
     consumedFuelLiters,
@@ -1118,19 +1308,34 @@ function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecor
     isSubmittedToGithub: next.submittedToGithub,
   };
 }
-function deleteRecord(recordId: string): void {
-  const next = state.records.filter((record) => record.id !== recordId);
-
-  if (next.length === state.records.length) {
+async function deleteRecord(recordId: string): Promise<void> {
+  const current = state.records.find((record) => record.id === recordId);
+  if (!current) {
     return;
   }
 
-  state.records = next;
+  state.records = state.records.filter((record) => record.id !== recordId);
+  const nextTombstone = makeRecordTombstone(current);
+  const existingIndex = state.recordTombstones.findIndex((item) => item.recordId === recordId);
+
+  if (existingIndex >= 0) {
+    state.recordTombstones[existingIndex] = nextTombstone;
+  } else {
+    state.recordTombstones.push(nextTombstone);
+  }
+
+  state.recordTombstones = [...state.recordTombstones].sort((a, b) => a.deletedAtUnix - b.deletedAtUnix);
   recalculateAndPersist({
     appendAdjustmentLog: true,
     adjustmentSource: 'records',
     balanceChangedAtUnix: nowUnixSeconds(),
   });
+
+  try {
+    await submitRecordTombstone(recordId);
+  } catch {
+    // Keep local pending tombstone and let batch sync retry later.
+  }
 }
 
 function resetFuelBaseline(): void {
@@ -1173,10 +1378,57 @@ async function submitRecord(recordId: string): Promise<{ path: string; sha?: str
 
     record.githubSubmittedTargets = targets;
     record.submittedToGithub = targetKey ? targets.includes(targetKey) : true;
+    state.recordTombstones = state.recordTombstones.filter((item) => item.recordId !== record.id);
     persistState();
     return result;
   } finally {
     state.submittingRecordIds = state.submittingRecordIds.filter((id) => id !== recordId);
+  }
+}
+
+function getPendingRecordTombstoneIds(recordType?: RecordType): string[] {
+  const targetKey = getCurrentGithubSubmissionTargetKey();
+  return state.recordTombstones
+    .filter(
+      (item) =>
+        !(targetKey ? item.githubSubmittedTargets.includes(targetKey) : item.submittedToGithub) &&
+        (!recordType || item.recordType === recordType),
+    )
+    .map((item) => item.recordId);
+}
+
+async function submitRecordTombstone(recordId: string): Promise<{ path: string; sha?: string }> {
+  const existingTask = inFlightRecordTombstoneSubmissions.get(recordId);
+  if (existingTask) {
+    return existingTask;
+  }
+
+  const task = (async () => {
+    const tombstone = state.recordTombstones.find((item) => item.recordId === recordId);
+    if (!tombstone) {
+      throw new Error('删除记录不存在，无法提交。');
+    }
+
+    const result = await submitRecordTombstoneToGithub(tombstone, state.config, state.githubToken);
+    const targetKey = getCurrentGithubSubmissionTargetKey();
+    const targets = normalizeGithubSubmittedTargets(tombstone.githubSubmittedTargets);
+    if (targetKey && !targets.includes(targetKey)) {
+      targets.push(targetKey);
+    }
+
+    tombstone.githubSubmittedTargets = targets;
+    tombstone.submittedToGithub = targetKey ? targets.includes(targetKey) : true;
+    tombstone.githubPath = result.path;
+    persistState();
+    return result;
+  })();
+
+  inFlightRecordTombstoneSubmissions.set(recordId, task);
+
+  try {
+    return await task;
+  } finally {
+    inFlightRecordTombstoneSubmissions.delete(recordId);
   }
 }
 
@@ -1351,6 +1603,41 @@ async function submitRecords(recordIds: string[]): Promise<BatchSubmitResult> {
   };
 }
 
+async function submitRecordTombstones(recordIds: string[]): Promise<BatchSubmitResult> {
+  const uniqueIds = Array.from(new Set(recordIds));
+  const successRecordIds: string[] = [];
+  const failures: Array<{ recordId: string; message: string }> = [];
+
+  for (const recordId of uniqueIds) {
+    const exists = state.recordTombstones.some((item) => item.recordId === recordId);
+
+    if (!exists) {
+      failures.push({
+        recordId,
+        message: '删除记录不存在，已跳过。',
+      });
+      continue;
+    }
+
+    try {
+      await submitRecordTombstone(recordId);
+      successRecordIds.push(recordId);
+    } catch (error) {
+      failures.push({
+        recordId,
+        message: error instanceof Error ? error.message : '提交失败。',
+      });
+    }
+  }
+
+  return {
+    successCount: successRecordIds.length,
+    failedCount: failures.length,
+    successRecordIds,
+    failures,
+  };
+}
+
 function filterRecordsByType(records: unknown[], recordType?: RecordType): unknown[] {
   if (!recordType) {
     return records;
@@ -1372,17 +1659,36 @@ function getPendingRecordIds(recordType?: RecordType): string[] {
     .map((record) => record.id);
 }
 
+function getPendingRecordChangeCount(recordType?: RecordType): number {
+  return getPendingRecordIds(recordType).length + getPendingRecordTombstoneIds(recordType).length;
+}
+
 async function submitPendingRecords(recordType?: RecordType): Promise<BatchSubmitResult> {
-  return submitRecords(getPendingRecordIds(recordType));
+  const recordResult = await submitRecords(getPendingRecordIds(recordType));
+  const tombstoneResult = await submitRecordTombstones(getPendingRecordTombstoneIds(recordType));
+
+  return {
+    successCount: recordResult.successCount + tombstoneResult.successCount,
+    failedCount: recordResult.failedCount + tombstoneResult.failedCount,
+    successRecordIds: [...recordResult.successRecordIds, ...tombstoneResult.successRecordIds],
+    failures: [...recordResult.failures, ...tombstoneResult.failures],
+  };
 }
 
 async function syncRecordsFromGithub(recordType?: RecordType): Promise<SyncRecordsResult> {
-  const githubRecords = await fetchRecordsFromGithub(state.config, state.githubToken);
-  const filteredFromGithub = filterRecordsByType(githubRecords, recordType);
+  const remoteBundle = await fetchRecordsFromGithub(state.config, state.githubToken);
   const targetKey = getCurrentGithubSubmissionTargetKey();
-  const normalizedFromGithub = filteredFromGithub.map((item) => {
+  const localRecordsMap = new Map(state.records.map((record) => [record.id, record]));
+  const previousSignature = state.records.map((record) => `${record.id}:${getRecordUpdatedAtUnix(record)}`).join('|');
+
+  const filteredFromGithub = filterRecordsByType(remoteBundle.records, recordType);
+  const normalizedRemoteRecords: AppRecord[] = [];
+  let invalid = 0;
+
+  for (const item of filteredFromGithub) {
     if (!item || typeof item !== 'object') {
-      return item;
+      invalid += 1;
+      continue;
     }
 
     const value = item as Record<string, unknown>;
@@ -1391,17 +1697,107 @@ async function syncRecordsFromGithub(recordType?: RecordType): Promise<SyncRecor
       targets.push(targetKey);
     }
 
-    return {
-      ...value,
-      submittedToGithub: targetKey ? true : Boolean(value.submittedToGithub),
-      githubSubmittedTargets: targets,
-    };
-  });
-  const importResult = importRecords(normalizedFromGithub);
+    const normalized = sanitizeRecord(
+      {
+        ...value,
+        submittedToGithub: targetKey ? true : Boolean(value.submittedToGithub),
+        githubSubmittedTargets: targets,
+      },
+      targetKey,
+    );
+
+    if (!normalized) {
+      invalid += 1;
+      continue;
+    }
+
+    normalizedRemoteRecords.push(normalized);
+  }
+
+  const latestRemoteRecordMap = new Map<string, AppRecord>();
+  for (const record of normalizedRemoteRecords) {
+    const existing = latestRemoteRecordMap.get(record.id);
+    if (!existing || getRecordUpdatedAtUnix(record) >= getRecordUpdatedAtUnix(existing)) {
+      latestRemoteRecordMap.set(record.id, record);
+    }
+  }
+
+  let added = 0;
+  let skipped = 0;
+
+  for (const [recordId, remoteRecord] of latestRemoteRecordMap.entries()) {
+    const localRecord = localRecordsMap.get(recordId);
+    if (!localRecord) {
+      localRecordsMap.set(recordId, remoteRecord);
+      added += 1;
+      continue;
+    }
+
+    if (getRecordUpdatedAtUnix(remoteRecord) > getRecordUpdatedAtUnix(localRecord)) {
+      localRecordsMap.set(recordId, remoteRecord);
+      continue;
+    }
+
+    skipped += 1;
+  }
+
+  const normalizedRemoteTombstones = remoteBundle.tombstones
+    .filter((item) => !recordType || !item.recordType || item.recordType === recordType)
+    .sort((a, b) => a.deletedAtUnix - b.deletedAtUnix);
+
+  for (const tombstone of normalizedRemoteTombstones) {
+    const localRecord = localRecordsMap.get(tombstone.recordId);
+    if (localRecord && tombstone.deletedAtUnix >= getRecordUpdatedAtUnix(localRecord)) {
+      localRecordsMap.delete(tombstone.recordId);
+    }
+
+    const localTombstone = state.recordTombstones.find((item) => item.recordId === tombstone.recordId);
+    if (!localTombstone) {
+      continue;
+    }
+
+    if (tombstone.deletedAtUnix >= localTombstone.deletedAtUnix) {
+      const targets = normalizeGithubSubmittedTargets(localTombstone.githubSubmittedTargets);
+      if (targetKey && !targets.includes(targetKey)) {
+        targets.push(targetKey);
+      }
+      localTombstone.githubSubmittedTargets = targets;
+      localTombstone.submittedToGithub = targetKey ? targets.includes(targetKey) : true;
+      localTombstone.deletedAt = tombstone.deletedAt;
+      localTombstone.deletedAtUnix = tombstone.deletedAtUnix;
+    }
+  }
+
+  for (const tombstone of state.recordTombstones) {
+    if (recordType && tombstone.recordType !== recordType) {
+      continue;
+    }
+
+    const localRecord = localRecordsMap.get(tombstone.recordId);
+    if (localRecord && tombstone.deletedAtUnix >= getRecordUpdatedAtUnix(localRecord)) {
+      localRecordsMap.delete(tombstone.recordId);
+    }
+  }
+
+  state.records = [...localRecordsMap.values()].sort(compareRecordsByTimeAsc);
+  state.recordTombstones = [...state.recordTombstones].sort((a, b) => a.deletedAtUnix - b.deletedAtUnix);
+
+  const nextSignature = state.records.map((record) => `${record.id}:${getRecordUpdatedAtUnix(record)}`).join('|');
+  if (nextSignature !== previousSignature) {
+    recalculateAndPersist({
+      appendAdjustmentLog: true,
+      adjustmentSource: 'records',
+      balanceChangedAtUnix: nowUnixSeconds(),
+    });
+  } else {
+    persistState();
+  }
 
   return {
     fetched: filteredFromGithub.length,
-    ...importResult,
+    added,
+    skipped,
+    invalid,
   };
 }
 
@@ -1410,6 +1806,7 @@ export function useAppStore() {
     state,
     initializeStore,
     updateConfig,
+    updateDeviceName,
     saveGithubToken,
     clearLocalCache,
     updateUserProfile,
@@ -1430,6 +1827,7 @@ export function useAppStore() {
     submitRecord,
     submitRecords,
     submitPendingRecords,
+    getPendingRecordChangeCount,
     syncRecordsFromGithub,
     isRecordSubmitting,
     showToast,

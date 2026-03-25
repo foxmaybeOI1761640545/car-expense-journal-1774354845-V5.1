@@ -1,6 +1,7 @@
 import type { AppConfig } from './config';
+import type { DeviceMeta } from './device';
 import type { UserProfile } from './profile';
-import type { AppRecord } from './records';
+import type { AppRecord, RecordTombstone } from './records';
 
 export interface FuelBalanceState {
   baselineEstablished: boolean;
@@ -35,8 +36,10 @@ export interface AppStoreState {
   initialized: boolean;
   config: AppConfig;
   githubToken: string;
+  deviceMeta: DeviceMeta;
   userProfile: UserProfile;
   records: AppRecord[];
+  recordTombstones: RecordTombstone[];
   fuelBalance: FuelBalanceState;
   fuelBalanceAdjustments: FuelBalanceAdjustmentLog[];
   submittingRecordIds: string[];

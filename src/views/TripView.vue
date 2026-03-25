@@ -113,8 +113,8 @@
             <button class="btn btn--secondary" :disabled="isBatchSubmitting || !selectedRecordIds.length" @click="submitSelectedRecords">
               {{ isBatchSubmitting ? '提交中...' : `提交选中（${selectedRecordIds.length}）` }}
             </button>
-            <button class="btn btn--secondary" :disabled="isBatchSubmitting || !pendingRecordIds.length" @click="submitAllPendingRecords">
-              {{ isBatchSubmitting ? '提交中...' : `一键提交未提交（${pendingRecordIds.length}）` }}
+            <button class="btn btn--secondary" :disabled="isBatchSubmitting || pendingTripChangeCount === 0" @click="submitAllPendingRecords">
+              {{ isBatchSubmitting ? '提交中...' : `一键提交未提交（${pendingTripChangeCount}）` }}
             </button>
             <button class="btn btn--ghost" :disabled="!selectedRecordIds.length" @click="clearSelection">清空选择</button>
           </div>
@@ -313,7 +313,7 @@ const filteredRecords = computed(() => {
   });
 });
 
-const pendingRecordIds = computed(() => tripRecords.value.filter((record) => !record.submittedToGithub).map((record) => record.id));
+const pendingTripChangeCount = computed(() => store.getPendingRecordChangeCount('trip'));
 const filteredRecordIdSet = computed(() => new Set(filteredRecords.value.map((record) => record.id)));
 const isAllFilteredSelected = computed(() => {
   if (!filteredRecords.value.length) {
@@ -511,17 +511,21 @@ function saveEditRecord(recordId: string): void {
   }
 }
 
-function removeRecord(recordId: string): void {
+async function removeRecord(recordId: string): Promise<void> {
   if (!window.confirm('确认删除该耗油记录吗？')) {
     return;
   }
 
-  store.deleteRecord(recordId);
-  selectedRecordIds.value = selectedRecordIds.value.filter((id) => id !== recordId);
-  if (editingRecordId.value === recordId) {
-    editingRecordId.value = null;
+  try {
+    await store.deleteRecord(recordId);
+    selectedRecordIds.value = selectedRecordIds.value.filter((id) => id !== recordId);
+    if (editingRecordId.value === recordId) {
+      editingRecordId.value = null;
+    }
+    store.showToast('耗油记录已删除。', 'info');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '删除失败。', 'error');
   }
-  store.showToast('耗油记录已删除。', 'info');
 }
 
 function isSubmitting(recordId: string): boolean {
@@ -582,7 +586,36 @@ async function submitSelectedRecords(): Promise<void> {
 }
 
 async function submitAllPendingRecords(): Promise<void> {
-  await submitMultiple(pendingRecordIds.value, '未提交记录');
+  if (isBatchSubmitting.value) {
+    return;
+  }
+
+  if (pendingTripChangeCount.value === 0) {
+    store.showToast('没有可提交的耗油记录变更。', 'info');
+    return;
+  }
+
+  isBatchSubmitting.value = true;
+
+  try {
+    const result = await store.submitPendingRecords('trip');
+
+    if (result.successCount > 0 && result.failedCount === 0) {
+      store.showToast(`耗油记录变更提交成功，共 ${result.successCount} 条。`, 'success');
+      return;
+    }
+
+    if (result.successCount > 0) {
+      const firstFailure = result.failures[0]?.message ?? '部分记录提交失败。';
+      store.showToast(`耗油记录变更提交完成：成功 ${result.successCount}，失败 ${result.failedCount}。${firstFailure}`, 'info');
+      return;
+    }
+
+    const failure = result.failures[0]?.message ?? '提交失败。';
+    store.showToast(failure, 'error');
+  } finally {
+    isBatchSubmitting.value = false;
+  }
 }
 
 function toggleSelectAllFiltered(): void {

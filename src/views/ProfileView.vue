@@ -5,6 +5,7 @@
     <section class="profile-grid">
       <article class="card profile-avatar-card">
         <h2>头像设置</h2>
+        <p class="hint">当前设备：{{ currentDeviceNameText }}（ID：{{ currentDeviceIdText }}）</p>
         <div class="avatar-panel">
           <button
             class="avatar-preview-trigger"
@@ -225,6 +226,17 @@ const avatarCropperImageStyle = computed(() => ({
   height: `${avatarCropperRenderedHeight.value}px`,
   transform: `translate(${avatarCropper.offsetX}px, ${avatarCropper.offsetY}px)`,
 }));
+const currentDeviceNameText = computed(() => {
+  const value = store.state.deviceMeta.deviceName.trim();
+  return value || '当前设备';
+});
+const currentDeviceIdText = computed(() => {
+  const value = store.state.deviceMeta.deviceId.trim();
+  if (!value) {
+    return '未生成';
+  }
+  return value.length <= 18 ? value : `${value.slice(0, 10)}...${value.slice(-6)}`;
+});
 
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);

@@ -15,7 +15,9 @@
   - 用户管理页 `/#/profile`
   - 应用说明页 `/#/guide`
 - 本地存储（localStorage）
+  - 设备元信息（设备 ID / 设备名称）
   - 记录数据
+  - 删除标记（record tombstones）
   - 剩余油量状态（自动估算 + 手动修正）
   - 剩余油量手动变更日志
   - 页面设置（不含 GitHub Token）
@@ -26,7 +28,9 @@
 - 用户管理页支持个人信息维护、头像 1:1 裁剪（512x512 PNG）、方/圆样式切换
 - 处理后的头像与用户资料可通过 PAT 上传到用户仓库做私有管理
 - 剩余油量每次变更（手动修正 / 记录引起的自动变化）都会写入独立日志文件（每条日志单文件）到目录 `fuel-balance-adjustments/`
-- 支持从 GitHub 拉取历史 JSON 并合并到本地（自动去重）
+- 支持多设备资料隔离（用户资料按设备 ID 独立存储）
+- 支持记录跨设备共享一致（新增/修改 upsert + 删除 tombstone）
+- 支持从 GitHub 拉取共享记录并按“记录更新时间 vs 删除时间”合并最终状态
 - 支持“业务发生时间”（加油/耗油时间）与“记录创建时间”分离；业务时间留空时自动回退到记录创建时间
 - 历史记录支持倒序展示、筛选、编辑、删除、导出 JSON/CSV
 - 耗油页支持导入 JSON、批量提交与 GitHub 历史拉取
@@ -125,25 +129,26 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 - 加油页支持“一键提交全部未提交（仅加油）”。
 - 首页支持“一键提交全部未提交（全类型）”。
 - 使用 `PUT /repos/{owner}/{repo}/contents/{path}`。
-- 文件命名：`<githubRecordsDir>/<10位Unix秒时间戳>-<record.id>.json`
-  - 例如：`data/records/1742788800-trip-a1b2c3.json`
-- 若是已提交记录被编辑，重新提交时会生成新文件（保留历史版本）。
+- 记录文件路径：`<githubRecordsDir>/records/<record.id>.json`（同 ID 覆盖更新）。
+- 删除标记路径：`<githubRecordsDir>/record-tombstones/<record.id>.json`。
+- 若记录曾提交过，编辑后会再次提交同一路径，按更新时间覆盖为最新版本。
 
 ### 从 GitHub 拉取历史
 - 耗油页支持点击“从 GitHub 拉取耗油历史（仅耗油）”。
 - 加油页支持点击“从 GitHub 拉取加油历史（仅加油）”。
 - 首页支持“一键拉取（全类型）”。
-- 会读取 `githubRecordsDir` 下的 JSON 文件，解析后按页面/入口对应类型合并到本地记录。
-- 合并时会按 `id` 去重，重复项跳过，并提示新增/重复/无效数量。
+- 会读取共享记录目录 `records/` 与删除标记目录 `record-tombstones/`，并兼容旧版根目录 JSON。
+- 合并时按 `recordId` 聚合，比较 `updatedAtUnix/deletedAtUnix` 决定最终状态（保留或删除）。
+- 拉取结果会提示读取/新增/重复/无效数量。
 
 JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
-同时保留 `occurredAt/occurredAtUnix`（业务发生时间）与 `createdAt/createdAtUnix`（记录创建时间）。
+同时保留 `occurredAt/occurredAtUnix`（业务发生时间）与 `createdAt/createdAtUnix`（记录创建时间），并新增 `updatedAt/updatedAtUnix` 与来源设备字段。
 
 ### 用户资料同步（用户管理页）
-- 资料文件：`<githubRecordsDir>/user-profile/profile.json`
-- 头像文件：`<githubRecordsDir>/user-profile/avatars/avatar-<unix>.png`
+- 资料文件（设备隔离）：`<githubRecordsDir>/user-profile/devices/<deviceId>/profile.json`
+- 头像文件（设备隔离）：`<githubRecordsDir>/user-profile/devices/<deviceId>/avatars/avatar-<unix>.png`
 - 同步时会先处理头像为 1:1，再上传头像文件并写入资料 JSON 中的头像路径
-- 支持从 GitHub 拉取资料与头像并回填本地
+- 拉取时优先读取当前设备路径；若不存在，兼容读取旧版 `user-profile/profile.json`
 
 ## 路由页面结构
 
@@ -215,6 +220,7 @@ src/
     appStore.ts
   types/
     config.ts
+    device.ts
     profile.ts
     records.ts
     store.ts
