@@ -1,0 +1,13 @@
+[
+  {
+    "id": "fuel-balance-adjustment-f5a9551e-de2b-4832-b97f-81b9b423d4f2",
+    "source": "records",
+    "recordedAt": "2026-03-25T21:44:08.985Z",
+    "recordedAtUnix": 1774475048,
+    "balanceChangedAt": "2026-03-25T21:44:08.000Z",
+    "balanceChangedAtUnix": 1774475048,
+    "remainingFuelLiters": 21.19,
+    "autoCalculatedFuelLiters": 21.19,
+    "manualOffsetLiters": 0
+  }
+]
