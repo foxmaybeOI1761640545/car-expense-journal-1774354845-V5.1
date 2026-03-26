@@ -1,5 +1,5 @@
 <template>
-  <main class="page page--record">
+  <main class="page page--record page--trip-record">
     <PageHeader title="耗油记录" description="录入平均油耗、里程与油价，自动计算本次耗油量和费用。" />
 
     <section class="record-layout">
@@ -144,7 +144,7 @@
             :class="['history-item', { 'history-item--interactive': editingRecordId !== record.id }]"
             @click="openRecordDetail(record.id, $event)"
           >
-            <div class="history-item__top">
+            <div class="history-item__top history-item__top--desktop">
               <label class="checkbox-inline">
                 <input v-model="selectedRecordIds" type="checkbox" :value="record.id" />
                 <div class="history-item__title">
@@ -152,8 +152,17 @@
                   <span class="muted">记录时间：{{ toLocalDateTime(record.createdAt) }}</span>
                 </div>
               </label>
-              <span :class="record.submittedToGithub ? 'tag tag--success' : 'tag'">
-                {{ record.submittedToGithub ? '已提交 GitHub' : '未提交' }}
+              <span :class="['tag', { 'tag--success': record.submittedToGithub, 'tag--pending': !record.submittedToGithub }]">
+                {{ record.submittedToGithub ? '已提交' : '未提交' }}
+              </span>
+            </div>
+
+            <div class="history-item__top history-item__top--mobile">
+              <div class="history-item__title">
+                <strong>{{ toLocalDateTime(record.occurredAt) }}</strong>
+              </div>
+              <span :class="['tag', { 'tag--success': record.submittedToGithub, 'tag--pending': !record.submittedToGithub }]">
+                {{ record.submittedToGithub ? '已提交' : '未提交' }}
               </span>
             </div>
 
@@ -198,31 +207,81 @@
             </template>
 
             <template v-else>
-              <p>
-                平均油耗 {{ record.averageFuelConsumptionPer100Km.toFixed(2) }} L/100km · 行驶 {{ record.distanceKm.toFixed(2) }} km ·
-                耗油 {{ record.consumedFuelLiters.toFixed(3) }} L · 油价 {{ formatTripPrice(record) }} · 费用 {{ formatTripCost(record) }}
-              </p>
-              <p class="muted route-text">
-                <span class="route-point">{{ record.startLocation || '未填起点' }}</span>
-                <span class="route-arrow" aria-hidden="true"></span>
-                <span class="route-point">{{ record.endLocation || '未填终点' }}</span>
-              </p>
-              <p class="muted history-note-preview" :title="record.note || '无备注'">
-                {{ formatNotePreview(record.note) }}
-              </p>
+              <div class="history-item__desktop">
+                <p>
+                  平均油耗 {{ record.averageFuelConsumptionPer100Km.toFixed(2) }} L/100km · 行驶 {{ record.distanceKm.toFixed(2) }} km ·
+                  耗油 {{ record.consumedFuelLiters.toFixed(3) }} L · 油价 {{ formatTripPrice(record) }} · 费用 {{ formatTripCost(record) }}
+                </p>
+                <p class="muted route-text">
+                  <span class="route-point">{{ record.startLocation || '未填起点' }}</span>
+                  <span class="route-arrow" aria-hidden="true"></span>
+                  <span class="route-point">{{ record.endLocation || '未填终点' }}</span>
+                </p>
+                <p class="muted history-note-preview" :title="record.note || '无备注'">
+                  {{ formatNotePreview(record.note) }}
+                </p>
 
-              <div class="inline-actions">
-                <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="goToTripDetail(record.id)">详情</button>
-                <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="startEdit(record)">编辑</button>
-                <button
-                  class="btn btn--secondary"
-                  type="button"
-                  :disabled="isBatchSubmitting || isSubmitting(record.id)"
-                  @click.stop="submitRecord(record.id)"
-                >
-                  {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
-                </button>
-                <button class="btn btn--danger" type="button" :disabled="isBatchSubmitting" @click.stop="removeRecord(record.id)">删除</button>
+                <div class="inline-actions">
+                  <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="goToTripDetail(record.id)">详情</button>
+                  <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="startEdit(record)">编辑</button>
+                  <button
+                    class="btn btn--secondary"
+                    type="button"
+                    :disabled="isBatchSubmitting || isSubmitting(record.id)"
+                    @click.stop="submitRecord(record.id)"
+                  >
+                    {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
+                  </button>
+                  <button class="btn btn--danger" type="button" :disabled="isBatchSubmitting" @click.stop="removeRecord(record.id)">删除</button>
+                </div>
+              </div>
+
+              <div class="history-item__mobile">
+                <div class="history-item__metrics">
+                  <p class="history-item__metric">
+                    <span class="history-item__metric-label">平均油耗</span>
+                    <span class="history-item__metric-value">{{ record.averageFuelConsumptionPer100Km.toFixed(2) }} L/100km</span>
+                  </p>
+                  <p class="history-item__metric">
+                    <span class="history-item__metric-label">行驶</span>
+                    <span class="history-item__metric-value">{{ record.distanceKm.toFixed(2) }} km</span>
+                  </p>
+                  <p class="history-item__metric">
+                    <span class="history-item__metric-label">耗油</span>
+                    <span class="history-item__metric-value">{{ record.consumedFuelLiters.toFixed(3) }} L</span>
+                  </p>
+                  <p class="history-item__metric">
+                    <span class="history-item__metric-label">油价</span>
+                    <span class="history-item__metric-value">{{ formatTripPrice(record) }}</span>
+                  </p>
+                  <p class="history-item__metric history-item__metric--wide">
+                    <span class="history-item__metric-label">费用</span>
+                    <span class="history-item__metric-value">{{ formatTripCost(record) }}</span>
+                  </p>
+                </div>
+
+                <p class="muted route-text history-item__mobile-route">
+                  <span class="route-point">{{ record.startLocation || '未填起点' }}</span>
+                  <span class="route-arrow" aria-hidden="true"></span>
+                  <span class="route-point">{{ record.endLocation || '未填终点' }}</span>
+                </p>
+
+                <p class="muted history-item__mobile-note" :title="record.note || '无备注'">
+                  备注：{{ formatNotePreview(record.note) }}
+                </p>
+
+                <div class="inline-actions history-item__mobile-actions">
+                  <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="goToTripDetail(record.id)">详情</button>
+                  <button
+                    class="btn btn--secondary"
+                    type="button"
+                    :disabled="isBatchSubmitting || isSubmitting(record.id)"
+                    @click.stop="submitRecord(record.id)"
+                  >
+                    {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
+                  </button>
+                  <button class="btn btn--danger" type="button" :disabled="isBatchSubmitting" @click.stop="removeRecord(record.id)">删除</button>
+                </div>
               </div>
             </template>
           </li>

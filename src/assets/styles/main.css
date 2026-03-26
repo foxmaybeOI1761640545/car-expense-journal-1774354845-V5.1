@@ -866,6 +866,16 @@ select:focus {
   gap: 2px;
 }
 
+.page--trip-record .history-item__top--mobile,
+.page--trip-record .history-item__mobile {
+  display: none;
+}
+
+.page--trip-record .history-item__desktop {
+  display: grid;
+  gap: 8px;
+}
+
 .history-edit-panel {
   border: 1px dashed var(--color-border);
   border-radius: 12px;
@@ -903,6 +913,12 @@ select:focus {
   color: #2f5a2b;
   border-color: #b8d0b5;
   background: #edf6ec;
+}
+
+.tag--pending {
+  color: #7d3b33;
+  border-color: #e8b9b0;
+  background: #fce9e5;
 }
 
 .app-toast {
@@ -1082,6 +1098,115 @@ select:focus {
   .link-like {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .page--trip-record .batch-bar {
+    display: none;
+  }
+
+  .page--trip-record .history-item {
+    min-height: 252px;
+    gap: 10px;
+  }
+
+  .page--trip-record .history-item__top--desktop,
+  .page--trip-record .history-item__desktop {
+    display: none;
+  }
+
+  .page--trip-record .history-item__top--mobile {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .page--trip-record .history-item__top--mobile .history-item__title strong {
+    font-size: 18px;
+    line-height: 1.3;
+  }
+
+  .page--trip-record .history-item__top--mobile .tag {
+    flex: 0 0 auto;
+    min-height: 30px;
+    align-items: center;
+  }
+
+  .page--trip-record .history-item__mobile {
+    display: grid;
+    gap: 10px;
+    align-content: start;
+  }
+
+  .page--trip-record .history-item__metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .page--trip-record .history-item__metric {
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    background: #fffdf8;
+    padding: 7px 8px;
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .page--trip-record .history-item__metric--wide {
+    grid-column: 1 / -1;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .page--trip-record .history-item__metric-label {
+    font-size: 11px;
+    color: var(--color-text-subtle);
+    line-height: 1.2;
+  }
+
+  .page--trip-record .history-item__metric-value {
+    font-size: 14px;
+    line-height: 1.3;
+    font-weight: 700;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .page--trip-record .history-item__mobile-route {
+    font-size: 14px;
+    line-height: 1.4;
+  }
+
+  .page--trip-record .history-item__mobile-route .route-point {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .page--trip-record .history-item__mobile-note {
+    line-height: 1.45;
+    min-height: 2.9em;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .page--trip-record .history-item__mobile-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .page--trip-record .history-item__mobile-actions .btn {
+    min-width: 0;
+    min-height: 40px;
+    padding: 8px 6px;
+    font-size: 14px;
   }
 
   .app-toast {
