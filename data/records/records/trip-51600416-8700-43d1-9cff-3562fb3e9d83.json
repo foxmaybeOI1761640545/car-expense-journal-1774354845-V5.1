@@ -1,0 +1,22 @@
+{
+  "id": "trip-51600416-8700-43d1-9cff-3562fb3e9d83",
+  "type": "trip",
+  "occurredAt": "2026-03-26T12:43:00.000Z",
+  "occurredAtUnix": 1774528980,
+  "createdAt": "2026-03-26T14:21:00.234Z",
+  "createdAtUnix": 1774534860,
+  "updatedAt": "2026-03-26T14:21:00.234Z",
+  "updatedAtUnix": 1774534860,
+  "sourceDeviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 8.5,
+  "distanceKm": 3.6,
+  "consumedFuelLiters": 0.306,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 2.34,
+  "startLocation": "东升派出所门口免费停车位",
+  "endLocation": "小区大门停车场",
+  "note": "论文定稿搞定，回家放电脑，然后再准备出门吃饭。",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
