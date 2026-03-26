@@ -1,0 +1,22 @@
+{
+  "id": "trip-e194e8a9-9e6f-474e-80c9-9b225fb8a05d",
+  "type": "trip",
+  "occurredAt": "2026-03-26T08:15:00.000Z",
+  "occurredAtUnix": 1774512900,
+  "createdAt": "2026-03-26T08:24:31.600Z",
+  "createdAtUnix": 1774513471,
+  "updatedAt": "2026-03-26T08:24:31.600Z",
+  "updatedAtUnix": 1774513471,
+  "sourceDeviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 8.9,
+  "distanceKm": 6.1,
+  "consumedFuelLiters": 0.543,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 4.16,
+  "startLocation": "丹凤书店旁",
+  "endLocation": "揭阳宝德地下停车场",
+  "note": "继续来到星巴克学习。",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
