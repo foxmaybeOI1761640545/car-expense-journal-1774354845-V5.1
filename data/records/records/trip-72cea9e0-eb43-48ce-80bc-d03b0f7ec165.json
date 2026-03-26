@@ -1,0 +1,22 @@
+{
+  "id": "trip-72cea9e0-eb43-48ce-80bc-d03b0f7ec165",
+  "type": "trip",
+  "occurredAt": "2026-03-26T07:37:00.000Z",
+  "occurredAtUnix": 1774510620,
+  "createdAt": "2026-03-26T07:50:00.242Z",
+  "createdAtUnix": 1774511400,
+  "updatedAt": "2026-03-26T07:50:00.242Z",
+  "updatedAtUnix": 1774511400,
+  "sourceDeviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 9.5,
+  "distanceKm": 5.2,
+  "consumedFuelLiters": 0.494,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 3.78,
+  "startLocation": "揭阳宝德地下停车场",
+  "endLocation": "赵一鸣（广东揭阳立源楼店）",
+  "note": "从星巴克离开，打算去接妹妹看朱医生，因为中午到朱医生门诊发现他中午休息，下午3点才开门。路上打电话给妹妹，她说感觉不用看医生，然后我打算去城西的埔田肠粉吃点东西，但是发现门店虽然开着，但是好像没有人营业。然后我就到揭东人民广场旁边的赵一鸣购买可乐。",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
