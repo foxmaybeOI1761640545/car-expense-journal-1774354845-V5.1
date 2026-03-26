@@ -783,7 +783,7 @@ function showToast(message: string, type: 'success' | 'error' | 'info' = 'info')
 
   toastTimer = window.setTimeout(() => {
     state.toast.visible = false;
-  }, 2600);
+  }, 3000);
 }
 
 function hideToast(): void {

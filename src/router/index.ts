@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from 'vue-router';
 import HomeView from '../views/HomeView.vue';
 import FuelView from '../views/FuelView.vue';
 import TripView from '../views/TripView.vue';
+import TripDetailView from '../views/TripDetailView.vue';
 import GuideView from '../views/GuideView.vue';
 import ProfileView from '../views/ProfileView.vue';
 import SettingsView from '../views/SettingsView.vue';
@@ -23,6 +24,11 @@ const router = createRouter({
       path: '/trip',
       name: 'trip',
       component: TripView,
+    },
+    {
+      path: '/trip/:recordId',
+      name: 'trip-detail',
+      component: TripDetailView,
     },
     {
       path: '/guide',

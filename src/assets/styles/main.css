@@ -287,12 +287,16 @@ p {
   min-height: 44px;
   padding: 10px 16px;
   cursor: pointer;
-  transition: 0.2s ease;
+  transition: transform 0.15s ease, filter 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;
 }
 
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px) scale(0.99);
 }
 
 .btn--large {
@@ -368,6 +372,11 @@ p {
 
 .welcome-title {
   display: inline-block;
+}
+
+.welcome-text-toggle,
+.overview-toggle {
+  min-width: 0;
 }
 
 .dashboard-grid {
@@ -525,6 +534,10 @@ p {
   display: grid;
   grid-template-columns: 360px 1fr;
   gap: 16px;
+}
+
+.record-layout--single {
+  grid-template-columns: 1fr;
 }
 
 .guide-grid {
@@ -766,6 +779,9 @@ select {
 
 textarea {
   resize: vertical;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 input:focus,
@@ -825,6 +841,19 @@ select:focus {
   gap: 8px;
 }
 
+.history-item p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.history-item--interactive {
+  cursor: pointer;
+}
+
+.history-item--interactive:hover {
+  border-color: var(--color-secondary);
+}
+
 .history-item__top {
   display: flex;
   justify-content: space-between;
@@ -842,6 +871,22 @@ select:focus {
   border-radius: 12px;
   background: #fffdf8;
   padding: 10px;
+}
+
+.history-note-preview {
+  min-height: 1.5em;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.detail-note {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: #fffcf6;
+  padding: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .tag {
@@ -862,13 +907,16 @@ select:focus {
 
 .app-toast {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
-  max-width: 360px;
-  border-radius: 12px;
-  padding: 12px 14px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(92vw, 420px);
+  border-radius: 14px;
+  padding: 14px 18px;
   color: #fff;
   cursor: pointer;
+  text-align: center;
+  line-height: 1.45;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
   z-index: 50;
 }
@@ -893,7 +941,7 @@ select:focus {
 .toast-fade-enter-from,
 .toast-fade-leave-to {
   opacity: 0;
-  transform: translateY(6px);
+  transform: translate(-50%, calc(-50% + 8px)) scale(0.96);
 }
 
 @media (max-width: 1023px) {
@@ -979,13 +1027,13 @@ select:focus {
     justify-content: center;
   }
 
-  .welcome-title--mobile-toggle,
-  .value--mobile-toggle {
+  .welcome-text-toggle--mobile,
+  .overview-toggle--mobile {
     cursor: pointer;
   }
 
-  .welcome-title--mobile-toggle:focus-visible,
-  .value--mobile-toggle:focus-visible {
+  .welcome-text-toggle--mobile:focus-visible,
+  .overview-toggle--mobile:focus-visible {
     outline: 2px solid rgba(182, 92, 92, 0.3);
     outline-offset: 4px;
     border-radius: 8px;
@@ -1037,9 +1085,7 @@ select:focus {
   }
 
   .app-toast {
-    left: 12px;
-    right: 12px;
-    max-width: none;
+    width: min(92vw, 380px);
   }
 
   .avatar-lightbox {

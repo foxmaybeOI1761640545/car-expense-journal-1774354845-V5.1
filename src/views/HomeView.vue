@@ -1,18 +1,18 @@
 <template>
   <main class="page page--home">
     <section class="welcome card">
-      <div>
+      <div
+        class="welcome-text-toggle"
+        :class="{ 'welcome-text-toggle--mobile': isMobile }"
+        :role="isMobile ? 'button' : undefined"
+        :tabindex="isMobile ? 0 : undefined"
+        :aria-expanded="isMobile ? !isWelcomeActionsCollapsed : undefined"
+        @click="toggleWelcomeActions"
+        @keydown.enter.prevent="toggleWelcomeActions"
+        @keydown.space.prevent="toggleWelcomeActions"
+      >
         <p v-if="!isMobile || !isWelcomeActionsCollapsed" class="eyebrow">出行手账</p>
-        <h1
-          class="welcome-title"
-          :class="{ 'welcome-title--mobile-toggle': isMobile }"
-          :role="isMobile ? 'button' : undefined"
-          :tabindex="isMobile ? 0 : undefined"
-          :aria-expanded="isMobile ? !isWelcomeActionsCollapsed : undefined"
-          @click="toggleWelcomeActions"
-          @keydown.enter.prevent="toggleWelcomeActions"
-          @keydown.space.prevent="toggleWelcomeActions"
-        >
+        <h1 class="welcome-title">
           用车记录本
         </h1>
         <p v-if="!isMobile || !isWelcomeActionsCollapsed" class="subtitle">记录加油、耗油与车辆剩余油量估算</p>
@@ -35,10 +35,9 @@
 
     <section class="dashboard-grid">
       <article class="card overview-card">
-        <h2 v-if="!isMobile || !isOverviewCollapsed">剩余油量概览</h2>
-        <p
-          class="value"
-          :class="{ 'value--mobile-toggle': isMobile }"
+        <div
+          class="overview-toggle"
+          :class="{ 'overview-toggle--mobile': isMobile }"
           :role="isMobile ? 'button' : undefined"
           :tabindex="isMobile ? 0 : undefined"
           :aria-expanded="isMobile ? !isOverviewCollapsed : undefined"
@@ -46,8 +45,9 @@
           @keydown.enter.prevent="toggleOverviewDetails"
           @keydown.space.prevent="toggleOverviewDetails"
         >
-          {{ remainingFuelText }}
-        </p>
+        <h2 v-if="!isMobile || !isOverviewCollapsed">剩余油量概览</h2>
+        <p class="value">{{ remainingFuelText }}</p>
+        </div>
         <template v-if="showOverviewDetails">
           <p class="muted">统计基准：{{ baselineText }}</p>
           <p v-if="store.state.fuelBalance.autoCalculatedFuelLiters !== null" class="hint">
@@ -525,7 +525,17 @@ async function syncPendingFuelBalanceAdjustments(): Promise<void> {
 }
 
 function jumpToRecord(record: AppRecord): void {
-  router.push(record.type === 'fuel' ? '/fuel' : '/trip');
+  if (record.type === 'fuel') {
+    router.push('/fuel');
+    return;
+  }
+
+  router.push({
+    name: 'trip-detail',
+    params: {
+      recordId: record.id,
+    },
+  });
 }
 
 async function submitAllPendingRecords(): Promise<void> {

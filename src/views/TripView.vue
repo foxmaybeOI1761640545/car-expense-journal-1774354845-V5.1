@@ -44,15 +44,31 @@
             <input v-model="form.endLocation" type="text" list="trip-location-options" placeholder="如：宁波" />
           </label>
 
-          <label v-if="historyNotes.length" class="full-width">
-            历史备注快捷选择
-            <select v-model="selectedHistoryNote" @change="applyHistoryNote">
-              <option value="">请选择历史备注（可继续修改）</option>
-              <option v-for="historyNote in historyNotes" :key="historyNote" :value="historyNote">
-                {{ historyNote }}
+          <label class="full-width">
+            备注快捷模板
+            <select v-model="selectedTemplateNote" @change="applyTemplateNote">
+              <option value="">请选择快捷模板（可继续修改）</option>
+              <option v-for="template in noteTemplates" :key="template" :value="template">
+                {{ template }}
               </option>
             </select>
           </label>
+
+          <label class="full-width">
+            创建备注模板
+            <input
+              v-model="newTemplateNote"
+              type="text"
+              maxlength="120"
+              placeholder="输入常用备注后点击“添加模板”"
+              @keydown.enter.prevent="addNoteTemplate"
+            />
+          </label>
+
+          <div class="inline-actions full-width">
+            <button class="btn btn--ghost" type="button" @click="addNoteTemplate">添加模板</button>
+            <button class="btn btn--ghost" type="button" :disabled="!selectedTemplateNote" @click="removeSelectedTemplate">删除当前模板</button>
+          </div>
 
           <label class="full-width">
             备注（可选）
@@ -93,7 +109,7 @@
         <div class="filter-grid">
           <label>
             备注/地点搜索
-            <input v-model="keyword" type="text" placeholder="输入关键词" />
+            <input v-model="keyword" type="text" placeholder="输入关键字" />
           </label>
           <label>
             提交状态
@@ -122,7 +138,12 @@
         </div>
 
         <ul v-if="filteredRecords.length" class="history-list">
-          <li v-for="record in filteredRecords" :key="record.id" class="history-item">
+          <li
+            v-for="record in filteredRecords"
+            :key="record.id"
+            :class="['history-item', { 'history-item--interactive': editingRecordId !== record.id }]"
+            @click="openRecordDetail(record.id, $event)"
+          >
             <div class="history-item__top">
               <label class="checkbox-inline">
                 <input v-model="selectedRecordIds" type="checkbox" :value="record.id" />
@@ -186,14 +207,22 @@
                 <span class="route-arrow" aria-hidden="true"></span>
                 <span class="route-point">{{ record.endLocation || '未填终点' }}</span>
               </p>
-              <p class="muted">{{ record.note || '无备注' }}</p>
+              <p class="muted history-note-preview" :title="record.note || '无备注'">
+                {{ formatNotePreview(record.note) }}
+              </p>
 
               <div class="inline-actions">
-                <button class="btn btn--ghost" :disabled="isBatchSubmitting" @click="startEdit(record)">编辑</button>
-                <button class="btn btn--secondary" :disabled="isBatchSubmitting || isSubmitting(record.id)" @click="submitRecord(record.id)">
+                <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="goToTripDetail(record.id)">详情</button>
+                <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="startEdit(record)">编辑</button>
+                <button
+                  class="btn btn--secondary"
+                  type="button"
+                  :disabled="isBatchSubmitting || isSubmitting(record.id)"
+                  @click.stop="submitRecord(record.id)"
+                >
                   {{ isSubmitting(record.id) ? '提交中...' : '提交到 GitHub' }}
                 </button>
-                <button class="btn btn--danger" :disabled="isBatchSubmitting" @click="removeRecord(record.id)">删除</button>
+                <button class="btn btn--danger" type="button" :disabled="isBatchSubmitting" @click.stop="removeRecord(record.id)">删除</button>
               </div>
             </template>
           </li>
@@ -207,6 +236,7 @@
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
 import PageHeader from '../components/PageHeader.vue';
 import { useAppStore } from '../stores/appStore';
 import type { FuelRecord, TripRecord } from '../types/records';
@@ -214,6 +244,11 @@ import { parseDateTimeLocalToUnix, toDateTimeLocalInputValue, toLocalDateTime } 
 import { exportCsv, exportJson } from '../utils/export';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
+const NOTE_TEMPLATE_STORAGE_KEY = 'trip-note-templates';
+const NOTE_TEMPLATE_LIMIT = 30;
+const NOTE_TEMPLATE_MAX_LENGTH = 120;
+
+const router = useRouter();
 const store = useAppStore();
 
 const latestFuelPricePerLiter = computed<number | null>(() => {
@@ -260,7 +295,9 @@ const editForm = reactive({
 const keyword = ref('');
 const submitFilter = ref<'all' | 'submitted' | 'pending'>('all');
 const selectedRecordIds = ref<string[]>([]);
-const selectedHistoryNote = ref('');
+const selectedTemplateNote = ref('');
+const newTemplateNote = ref('');
+const noteTemplates = ref<string[]>(loadNoteTemplates());
 const importInputRef = ref<HTMLInputElement | null>(null);
 const isBatchSubmitting = ref(false);
 const isSyncingFromGithub = ref(false);
@@ -349,29 +386,6 @@ const historyLocations = computed(() => {
   return values;
 });
 
-const historyNotes = computed(() => {
-  const unique = new Set<string>();
-  const values: string[] = [];
-
-  for (const record of tripRecords.value) {
-    const text = record.note?.trim();
-
-    if (!text) {
-      continue;
-    }
-
-    const key = text.toLowerCase();
-    if (unique.has(key)) {
-      continue;
-    }
-
-    unique.add(key);
-    values.push(text);
-  }
-
-  return values;
-});
-
 watch(
   tripRecords,
   (records) => {
@@ -420,6 +434,110 @@ const editConsumedFuelPreview = computed(() => {
 
   return `${roundTo((distance / 100) * average, 3).toFixed(3)} L`;
 });
+
+function normalizeTemplateText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().slice(0, NOTE_TEMPLATE_MAX_LENGTH);
+}
+
+function loadNoteTemplates(): string[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(NOTE_TEMPLATE_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const unique = new Set<string>();
+    const values: string[] = [];
+
+    for (const item of parsed) {
+      if (typeof item !== 'string') {
+        continue;
+      }
+
+      const text = normalizeTemplateText(item);
+      if (!text) {
+        continue;
+      }
+
+      const key = text.toLowerCase();
+      if (unique.has(key)) {
+        continue;
+      }
+
+      unique.add(key);
+      values.push(text);
+
+      if (values.length >= NOTE_TEMPLATE_LIMIT) {
+        break;
+      }
+    }
+
+    return values;
+  } catch {
+    return [];
+  }
+}
+
+function persistNoteTemplates(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(NOTE_TEMPLATE_STORAGE_KEY, JSON.stringify(noteTemplates.value));
+}
+
+function addNoteTemplate(): void {
+  const text = normalizeTemplateText(newTemplateNote.value);
+
+  if (!text) {
+    store.showToast('请输入模板内容后再添加。', 'info');
+    return;
+  }
+
+  const exists = noteTemplates.value.some((item) => item.toLowerCase() === text.toLowerCase());
+  if (exists) {
+    selectedTemplateNote.value = noteTemplates.value.find((item) => item.toLowerCase() === text.toLowerCase()) ?? '';
+    store.showToast('该模板已存在。', 'info');
+    return;
+  }
+
+  noteTemplates.value = [text, ...noteTemplates.value].slice(0, NOTE_TEMPLATE_LIMIT);
+  selectedTemplateNote.value = text;
+  newTemplateNote.value = '';
+  persistNoteTemplates();
+  store.showToast('备注模板已保存。', 'success');
+}
+
+function removeSelectedTemplate(): void {
+  const template = selectedTemplateNote.value;
+
+  if (!template) {
+    return;
+  }
+
+  noteTemplates.value = noteTemplates.value.filter((item) => item !== template);
+  selectedTemplateNote.value = '';
+  persistNoteTemplates();
+  store.showToast('已删除当前备注模板。', 'info');
+}
+
+function applyTemplateNote(): void {
+  if (!selectedTemplateNote.value) {
+    return;
+  }
+
+  form.note = selectedTemplateNote.value;
+  store.showToast('已应用备注模板，可继续编辑。', 'info');
+}
 
 function resolveOccurredAtUnixOrReject(value: string): number | undefined {
   const parsed = parseDateTimeLocalToUnix(value);
@@ -621,6 +739,7 @@ async function submitAllPendingRecords(): Promise<void> {
 function toggleSelectAllFiltered(): void {
   if (isAllFilteredSelected.value) {
     selectedRecordIds.value = selectedRecordIds.value.filter((recordId) => !filteredRecordIdSet.value.has(recordId));
+    store.showToast('已取消当前筛选项的全选。', 'info');
     return;
   }
 
@@ -630,22 +749,22 @@ function toggleSelectAllFiltered(): void {
   }
 
   selectedRecordIds.value = [...merged];
+  store.showToast(`已选中当前筛选项（${filteredRecords.value.length} 条）。`, 'success');
 }
 
 function clearSelection(): void {
-  selectedRecordIds.value = [];
-}
-
-function applyHistoryNote(): void {
-  if (!selectedHistoryNote.value) {
+  if (!selectedRecordIds.value.length) {
+    store.showToast('当前没有已选记录。', 'info');
     return;
   }
 
-  form.note = selectedHistoryNote.value;
+  selectedRecordIds.value = [];
+  store.showToast('已清空选择。', 'info');
 }
 
 function openImportDialog(): void {
   importInputRef.value?.click();
+  store.showToast('请选择要导入的 JSON 文件。', 'info');
 }
 
 async function handleImportFile(event: Event): Promise<void> {
@@ -743,6 +862,40 @@ function exportTripCsv(): void {
   );
 
   store.showToast('已导出 CSV。', 'success');
+}
+
+function shouldIgnoreRecordClick(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  return Boolean(target.closest('button, input, textarea, select, a, label'));
+}
+
+function openRecordDetail(recordId: string, event: MouseEvent): void {
+  if (editingRecordId.value === recordId || shouldIgnoreRecordClick(event.target)) {
+    return;
+  }
+
+  goToTripDetail(recordId);
+}
+
+function goToTripDetail(recordId: string): void {
+  router.push({
+    name: 'trip-detail',
+    params: {
+      recordId,
+    },
+  });
+}
+
+function formatNotePreview(note?: string): string {
+  const value = note?.trim();
+  if (!value) {
+    return '无备注';
+  }
+
+  return value.replace(/\s+/g, ' ');
 }
 
 function getTripFuelCost(record: TripRecord): number | null {
