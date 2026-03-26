@@ -1,0 +1,22 @@
+{
+  "id": "trip-2517bceb-f02e-47ac-a7bc-01e5131be070",
+  "type": "trip",
+  "occurredAt": "2026-03-26T07:37:00.000Z",
+  "occurredAtUnix": 1774510620,
+  "createdAt": "2026-03-26T07:51:46.841Z",
+  "createdAtUnix": 1774511506,
+  "updatedAt": "2026-03-26T07:51:46.841Z",
+  "updatedAtUnix": 1774511506,
+  "sourceDeviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 14.5,
+  "distanceKm": 0.6,
+  "consumedFuelLiters": 0.087,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 0.67,
+  "startLocation": "赵一鸣（广东揭阳立源楼店）",
+  "endLocation": "丹凤书店旁",
+  "note": "过来丹凤书店看一下有没有《认知觉醒》和《认知驱动》。",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
