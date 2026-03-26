@@ -494,6 +494,65 @@ const editConsumedFuelPreview = computed(() => {
   return `${roundTo((distance / 100) * average, 3).toFixed(3)} L`;
 });
 
+interface TripRecordDuplicateCheckInput {
+  occurredAtUnix?: number;
+  averageFuelConsumptionPer100Km: number;
+  distanceKm: number;
+  consumedFuelLiters: number;
+  pricePerLiter: number;
+  totalFuelCostCny: number;
+  startLocation?: string;
+  endLocation?: string;
+  note?: string;
+}
+
+function normalizeOptionalText(value: string): string | undefined {
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
+}
+
+function resetTripForm(): void {
+  form.averageFuelConsumptionPer100Km = '';
+  form.distanceKm = '';
+  form.pricePerLiter = '';
+  form.occurredAtText = '';
+  form.startLocation = '';
+  form.endLocation = '';
+  form.note = '';
+  selectedTemplateNote.value = '';
+}
+
+function resolveTripTotalFuelCost(record: TripRecord): number | undefined {
+  if (record.totalFuelCostCny !== undefined) {
+    return record.totalFuelCostCny;
+  }
+
+  if (record.pricePerLiter === undefined) {
+    return undefined;
+  }
+
+  return roundTo(record.consumedFuelLiters * record.pricePerLiter, 2);
+}
+
+function hasExactTripDuplicate(input: TripRecordDuplicateCheckInput): boolean {
+  return tripRecords.value.some((record) => {
+    const recordTotalFuelCost = resolveTripTotalFuelCost(record);
+    const sameOccurredAt = input.occurredAtUnix === undefined || record.occurredAtUnix === input.occurredAtUnix;
+
+    return (
+      sameOccurredAt &&
+      record.averageFuelConsumptionPer100Km === input.averageFuelConsumptionPer100Km &&
+      record.distanceKm === input.distanceKm &&
+      record.consumedFuelLiters === input.consumedFuelLiters &&
+      record.pricePerLiter === input.pricePerLiter &&
+      recordTotalFuelCost === input.totalFuelCostCny &&
+      record.startLocation === input.startLocation &&
+      record.endLocation === input.endLocation &&
+      record.note === input.note
+    );
+  });
+}
+
 function normalizeTemplateText(value: string): string {
   return value.replace(/\s+/g, ' ').trim().slice(0, NOTE_TEMPLATE_MAX_LENGTH);
 }
@@ -619,8 +678,29 @@ function saveTripRecord(): void {
   }
 
   try {
+    const occurredAtUnix = resolveOccurredAtUnixOrReject(form.occurredAtText);
+    const consumedFuelLiters = roundTo((distance / 100) * average, 3);
+    const duplicateCandidate: TripRecordDuplicateCheckInput = {
+      occurredAtUnix,
+      averageFuelConsumptionPer100Km: roundTo(average, 2),
+      distanceKm: roundTo(distance, 2),
+      consumedFuelLiters,
+      pricePerLiter: roundTo(price, 2),
+      totalFuelCostCny: roundTo(consumedFuelLiters * price, 2),
+      startLocation: normalizeOptionalText(form.startLocation),
+      endLocation: normalizeOptionalText(form.endLocation),
+      note: normalizeOptionalText(form.note),
+    };
+
+    if (hasExactTripDuplicate(duplicateCandidate)) {
+      const shouldContinue = window.confirm('检测到一条完全一致的耗油记录，请检查是否重复录入。点击“确定”继续保存，点击“取消”返回检查。');
+      if (!shouldContinue) {
+        return;
+      }
+    }
+
     store.addTripRecord({
-      occurredAtUnix: resolveOccurredAtUnixOrReject(form.occurredAtText),
+      occurredAtUnix,
       averageFuelConsumptionPer100Km: average,
       distanceKm: distance,
       pricePerLiter: price,
@@ -628,6 +708,7 @@ function saveTripRecord(): void {
       endLocation: form.endLocation,
       note: form.note,
     });
+    resetTripForm();
     store.showToast('耗油记录已保存到本地。', 'success');
   } catch (error) {
     store.showToast(error instanceof Error ? error.message : '保存失败。', 'error');

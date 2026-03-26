@@ -293,6 +293,50 @@ const consistencyDiff = computed(() => {
 
 const consistencyWarning = computed(() => consistencyDiff.value > CONSISTENCY_TOLERANCE);
 
+interface FuelRecordDuplicateCheckInput {
+  occurredAtUnix?: number;
+  province?: string;
+  fuelType: number;
+  pricePerLiter: number;
+  fuelVolumeLiters: number;
+  totalPriceCny: number;
+  stationName?: string;
+  note?: string;
+}
+
+function normalizeOptionalText(value: string): string | undefined {
+  const normalized = value.trim();
+  return normalized ? normalized : undefined;
+}
+
+function resetFuelForm(): void {
+  form.province = '';
+  form.fuelType = '';
+  form.pricePerLiter = '';
+  form.fuelVolumeLiters = '';
+  form.totalPriceCny = '';
+  form.stationName = '';
+  form.occurredAtText = '';
+  form.note = '';
+}
+
+function hasExactFuelDuplicate(input: FuelRecordDuplicateCheckInput): boolean {
+  return fuelRecords.value.some((record) => {
+    const sameOccurredAt = input.occurredAtUnix === undefined || record.occurredAtUnix === input.occurredAtUnix;
+
+    return (
+      sameOccurredAt &&
+      record.province === input.province &&
+      record.fuelType === input.fuelType &&
+      record.pricePerLiter === input.pricePerLiter &&
+      record.fuelVolumeLiters === input.fuelVolumeLiters &&
+      record.totalPriceCny === input.totalPriceCny &&
+      record.stationName === input.stationName &&
+      record.note === input.note
+    );
+  });
+}
+
 function autoFillMissing(): void {
   const price = parsePositiveNumber(form.pricePerLiter);
   const volume = parsePositiveNumber(form.fuelVolumeLiters);
@@ -341,8 +385,28 @@ function saveFuelRecord(): void {
   }
 
   try {
+    const occurredAtUnix = resolveOccurredAtUnixOrReject(form.occurredAtText);
+    const duplicateCandidate: FuelRecordDuplicateCheckInput = {
+      occurredAtUnix,
+      province: normalizeOptionalText(form.province),
+      fuelType: Math.round(fuelType),
+      pricePerLiter: roundTo(price, 2),
+      fuelVolumeLiters: roundTo(volume, 3),
+      totalPriceCny: roundTo(total, 2),
+      stationName: normalizeOptionalText(form.stationName),
+      note: normalizeOptionalText(form.note),
+    };
+
+    if (hasExactFuelDuplicate(duplicateCandidate)) {
+      const shouldContinue = window.confirm('检测到一条完全一致的加油记录，请检查是否重复录入。点击“确定”继续保存，点击“取消”返回检查。');
+      if (!shouldContinue) {
+        return;
+      }
+    }
+
+    const hasConsistencyWarning = consistencyWarning.value;
     store.addFuelRecord({
-      occurredAtUnix: resolveOccurredAtUnixOrReject(form.occurredAtText),
+      occurredAtUnix,
       province: form.province,
       fuelType,
       pricePerLiter: price,
@@ -352,7 +416,9 @@ function saveFuelRecord(): void {
       note: form.note,
     });
 
-    if (consistencyWarning.value) {
+    resetFuelForm();
+
+    if (hasConsistencyWarning) {
       store.showToast('记录已保存，但三项金额数据可能有误，请检查。', 'info');
     } else {
       store.showToast('加油记录已保存到本地。', 'success');
