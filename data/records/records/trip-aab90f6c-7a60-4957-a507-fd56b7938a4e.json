@@ -1,0 +1,22 @@
+{
+  "id": "trip-aab90f6c-7a60-4957-a507-fd56b7938a4e",
+  "type": "trip",
+  "occurredAt": "2026-03-26T05:50:00.000Z",
+  "occurredAtUnix": 1774504200,
+  "createdAt": "2026-03-26T07:20:41.878Z",
+  "createdAtUnix": 1774509641,
+  "updatedAt": "2026-03-26T07:20:41.878Z",
+  "updatedAtUnix": 1774509641,
+  "sourceDeviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 22.9,
+  "distanceKm": 0.2,
+  "consumedFuelLiters": 0.046,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 0.35,
+  "startLocation": "星巴克（揭阳宝德）",
+  "endLocation": "揭阳宝德地下停车场",
+  "note": "挪车到停车场，车位025。",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
