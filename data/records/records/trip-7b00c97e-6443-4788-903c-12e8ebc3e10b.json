@@ -1,0 +1,22 @@
+{
+  "id": "trip-7b00c97e-6443-4788-903c-12e8ebc3e10b",
+  "type": "trip",
+  "occurredAt": "2026-03-26T10:36:00.000Z",
+  "occurredAtUnix": 1774521360,
+  "createdAt": "2026-03-26T11:15:36.987Z",
+  "createdAtUnix": 1774523736,
+  "updatedAt": "2026-03-26T11:15:36.987Z",
+  "updatedAtUnix": 1774523736,
+  "sourceDeviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 21.1,
+  "distanceKm": 0.5,
+  "consumedFuelLiters": 0.106,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 0.81,
+  "startLocation": "揭阳宝德地下停车场",
+  "endLocation": "东升派出所门口免费停车位",
+  "note": "宝德免费停车时间即将结束，出来刷新免费时间时看见终点有免费停车位，所以停入其中。",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
