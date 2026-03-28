@@ -1,0 +1,22 @@
+{
+  "id": "trip-0120e25d-a566-4d20-8d27-eeb55e010af9",
+  "type": "trip",
+  "occurredAt": "2026-03-28T08:45:00.000Z",
+  "occurredAtUnix": 1774687500,
+  "createdAt": "2026-03-28T08:54:05.976Z",
+  "createdAtUnix": 1774688045,
+  "updatedAt": "2026-03-28T08:54:05.976Z",
+  "updatedAtUnix": 1774688045,
+  "sourceDeviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 10.8,
+  "distanceKm": 4.6,
+  "consumedFuelLiters": 0.497,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 3.81,
+  "startLocation": "小区大门停车场",
+  "endLocation": "揭阳宝德地下停车场",
+  "note": "来星巴克改论文，车位056。",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
