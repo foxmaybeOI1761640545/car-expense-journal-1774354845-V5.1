@@ -1,0 +1,22 @@
+{
+  "id": "trip-1d8fdd29-79d4-46c4-8058-5faef319c726",
+  "type": "trip",
+  "occurredAt": "2026-03-29T08:35:00.000Z",
+  "occurredAtUnix": 1774773300,
+  "createdAt": "2026-03-29T08:37:31.507Z",
+  "createdAtUnix": 1774773451,
+  "updatedAt": "2026-03-29T08:37:31.507Z",
+  "updatedAtUnix": 1774773451,
+  "sourceDeviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 9,
+  "distanceKm": 4,
+  "consumedFuelLiters": 0.36,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 2.76,
+  "startLocation": "小区大门停车场",
+  "endLocation": "鼎鸿汽车服务",
+  "note": "来更换汽车机油，具体平均油耗和距离有些许出入，因为汽修小哥帮忙停到升降机上，而我最后拍照也没拍清楚。",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
