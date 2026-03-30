@@ -242,3 +242,8 @@ src/
 - 统一提交说明模板与历史提交总结见：[docs/COMMIT_CONVENTION.md](docs/COMMIT_CONVENTION.md)
 - 提交正文要求中英双语（中文 6 行 + English 6 lines），不适用项填 `N/A`
 - 可直接启用仓库模板：`git config commit.template .gitmessage`
+
+## 扩展部署方案
+
+- 原方案 + Render + UptimeRobot 前后端落地说明见：[docs/RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md](docs/RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md)
+- 新手逐步实施（先做倒计时+在线提醒）见：[docs/ONLINE_REMINDER_RENDER_UPTIMEROBOT_GUIDE.md](docs/ONLINE_REMINDER_RENDER_UPTIMEROBOT_GUIDE.md)
