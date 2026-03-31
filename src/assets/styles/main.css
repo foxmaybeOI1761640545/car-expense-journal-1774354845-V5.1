@@ -921,6 +921,78 @@ select:focus {
   background: #fce9e5;
 }
 
+.tag--neutral {
+  color: #6f6259;
+  border-color: var(--color-border);
+  background: #f8f2e8;
+}
+
+.reminder-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.reminder-form-card {
+  grid-column: span 6;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.reminder-channel-card {
+  grid-column: span 6;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.reminder-list-card {
+  grid-column: span 12;
+  display: grid;
+  gap: 12px;
+}
+
+.reminder-form {
+  margin-top: 0;
+}
+
+.reminder-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.reminder-item {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: #fff9f3;
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.reminder-item--pending {
+  background: #fffdf8;
+}
+
+.reminder-item__main {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.reminder-item__title-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
 .app-toast {
   position: fixed;
   left: 50%;
@@ -969,12 +1041,16 @@ select:focus {
   .summary-card,
   .totals-card,
   .recent-card,
-  .settings-card {
+  .settings-card,
+  .reminder-form-card,
+  .reminder-channel-card,
+  .reminder-list-card {
     grid-column: span 1;
   }
 
   .overview-card,
-  .settings-card {
+  .settings-card,
+  .reminder-list-card {
     grid-column: span 2;
   }
 
@@ -1067,7 +1143,10 @@ select:focus {
   .summary-card,
   .totals-card,
   .recent-card,
-  .settings-card {
+  .settings-card,
+  .reminder-form-card,
+  .reminder-channel-card,
+  .reminder-list-card {
     grid-column: span 1;
   }
 
@@ -1098,6 +1177,11 @@ select:focus {
   .link-like {
     grid-template-columns: 1fr;
     gap: 4px;
+  }
+
+  .reminder-item {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .page--trip-record .batch-bar {

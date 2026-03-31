@@ -9,5 +9,7 @@
   "githubRepo": "car-expense-journal-1774354845-V5.1",
   "githubBranch": "records/live-data",
   "githubRecordsDir": "data/records",
+  "reminderApiBaseUrl": "",
+  "reminderDefaultEmail": "",
   "preferConfigOverLocalStorage": false
 }

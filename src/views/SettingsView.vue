@@ -61,6 +61,14 @@
           <input v-model="settings.githubRecordsDir" type="text" placeholder="data/records" />
         </label>
         <label>
+          提醒后端地址（可选）
+          <input v-model="settings.reminderApiBaseUrl" type="text" placeholder="https://your-service.onrender.com" />
+        </label>
+        <label>
+          默认提醒邮箱（可选）
+          <input v-model="settings.reminderDefaultEmail" type="email" placeholder="you@example.com" />
+        </label>
+        <label>
           GitHub Token（仅本浏览器保存）
           <input
             v-model="githubTokenInput"
@@ -171,6 +179,8 @@ function saveSettings(): void {
     githubRepo: settings.githubRepo.trim(),
     githubBranch: settings.githubBranch.trim(),
     githubRecordsDir: settings.githubRecordsDir.trim() || 'data/records',
+    reminderApiBaseUrl: settings.reminderApiBaseUrl.trim(),
+    reminderDefaultEmail: settings.reminderDefaultEmail.trim(),
     preferConfigOverLocalStorage: settings.preferConfigOverLocalStorage,
   });
   store.updateDeviceName(deviceNameInput.value);

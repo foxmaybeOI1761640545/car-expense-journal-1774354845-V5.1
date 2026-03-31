@@ -6,6 +6,7 @@ import TripDetailView from '../views/TripDetailView.vue';
 import GuideView from '../views/GuideView.vue';
 import ProfileView from '../views/ProfileView.vue';
 import SettingsView from '../views/SettingsView.vue';
+import ReminderView from '../views/ReminderView.vue';
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -44,6 +45,11 @@ const router = createRouter({
       path: '/settings',
       name: 'settings',
       component: SettingsView,
+    },
+    {
+      path: '/reminder',
+      name: 'reminder',
+      component: ReminderView,
     },
   ],
 });

@@ -47,6 +47,12 @@ function sanitizePartialConfig(raw: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof raw.githubRecordsDir === 'string' && raw.githubRecordsDir.trim()) {
     next.githubRecordsDir = raw.githubRecordsDir.trim();
   }
+  if (typeof raw.reminderApiBaseUrl === 'string') {
+    next.reminderApiBaseUrl = raw.reminderApiBaseUrl.trim();
+  }
+  if (typeof raw.reminderDefaultEmail === 'string') {
+    next.reminderDefaultEmail = raw.reminderDefaultEmail.trim();
+  }
   if (typeof raw.preferConfigOverLocalStorage === 'boolean') {
     next.preferConfigOverLocalStorage = raw.preferConfigOverLocalStorage;
   }

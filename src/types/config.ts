@@ -12,6 +12,8 @@
   githubRepo: string;
   githubBranch: string;
   githubRecordsDir: string;
+  reminderApiBaseUrl: string;
+  reminderDefaultEmail: string;
   preferConfigOverLocalStorage: boolean;
 }
 
@@ -26,5 +28,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   githubRepo: 'car-expense-journal-1774354845-V5.1',
   githubBranch: 'records/live-data',
   githubRecordsDir: 'data/records',
+  reminderApiBaseUrl: '',
+  reminderDefaultEmail: '',
   preferConfigOverLocalStorage: false,
 };

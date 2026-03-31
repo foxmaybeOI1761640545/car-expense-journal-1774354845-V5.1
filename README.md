@@ -8,10 +8,11 @@
 
 ## 功能概览
 
-- 四页面 SPA（Vue Router）
+- 多页面 SPA（Vue Router，当前 7 页）
   - 首页 `/#/`
   - 加油记录页 `/#/fuel`
   - 耗油记录页 `/#/trip`
+  - 提醒中心页 `/#/reminder`
   - 用户管理页 `/#/profile`
   - 应用说明页 `/#/guide`
 - 本地存储（localStorage）
@@ -46,6 +47,21 @@ npm run dev
 ```
 
 默认地址：`http://localhost:5173`
+
+## 提醒后端本地运行（可选）
+
+提醒中心支持配置后端探活地址（页面设置中的 `reminderApiBaseUrl`）。仓库已内置一个最小后端骨架：
+
+```bash
+cd backend
+npm run start
+```
+
+默认监听：`http://localhost:10080`
+
+可用接口：
+- `GET /healthz`
+- `GET /api/ping`
 
 ## 构建
 
@@ -101,6 +117,8 @@ Token 建议使用 Fine-grained PAT，并授予目标仓库 `Contents: Read and 
 - `githubRepo`
 - `githubBranch`（可留空，留空时使用仓库默认分支）
 - `githubRecordsDir`
+- `reminderApiBaseUrl`（可留空，用于提醒后端探活）
+- `reminderDefaultEmail`（可留空，提醒模块默认邮箱）
 - `preferConfigOverLocalStorage`
 
 启动加载顺序：
@@ -161,6 +179,10 @@ JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
   - 个人信息（昵称/邮箱/手机号/所在地/简介）
   - 头像 1:1 中心裁剪（512x512）与圆形/方形展示
   - 用户资料与头像同步到 GitHub，支持从 GitHub 拉取回填
+- 提醒中心页 `/#/reminder`
+  - 停车提醒 / 番茄钟 / 自定义倒计时
+  - 到点提醒（Toast + 浏览器通知 + 声音提醒）
+  - 后端连通性检测（`/api/ping`）
 - 应用说明页 `/#/guide`
   - 配置来源与优先级说明
   - GitHub 提交配置建议
@@ -198,6 +220,8 @@ JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
 ## 目录结构
 
 ```txt
+backend/
+  src/server.mjs
 public/
   config/app-config.json
 src/
@@ -232,6 +256,7 @@ src/
     HomeView.vue
     FuelView.vue
     ProfileView.vue
+    ReminderView.vue
     TripView.vue
   App.vue
   main.ts
