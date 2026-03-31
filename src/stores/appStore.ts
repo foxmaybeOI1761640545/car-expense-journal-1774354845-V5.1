@@ -31,7 +31,7 @@ import {
   saveAppData,
   saveLocalConfig,
 } from '../services/localStorageService';
-import { clearReminderTasksStorage } from '../services/reminderService';
+import { clearReminderRingtoneConfig, clearReminderTasksStorage } from '../services/reminderService';
 import { nowIsoString, nowUnixSeconds, unixSecondsToIsoString } from '../utils/date';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
@@ -892,6 +892,7 @@ async function clearLocalCache(options: ClearLocalCacheOptions = {}): Promise<vo
   clearAppData();
   clearLocalConfig();
   clearReminderTasksStorage();
+  clearReminderRingtoneConfig();
 
   state.config = resolveAppConfig(fileConfig, {});
   applyBranding(state.config);

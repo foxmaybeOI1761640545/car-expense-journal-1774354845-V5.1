@@ -980,6 +980,11 @@ select:focus {
   background: #fffdf8;
 }
 
+.reminder-item--fired {
+  border-color: #e8b9b0;
+  background: #fff4f2;
+}
+
 .reminder-item__main {
   display: grid;
   gap: 6px;

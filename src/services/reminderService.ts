@@ -1,7 +1,14 @@
-import type { CreateReminderTaskInput, ReminderKind, ReminderStatus, ReminderTask } from '../types/reminder';
+import type {
+  CreateReminderTaskInput,
+  ReminderKind,
+  ReminderRingtoneConfig,
+  ReminderStatus,
+  ReminderTask,
+} from '../types/reminder';
 import { nowUnixSeconds } from '../utils/date';
 
 const REMINDER_STORAGE_KEY = 'car-journal-reminders-v1';
+const REMINDER_RINGTONE_STORAGE_KEY = 'car-journal-reminder-ringtone-v1';
 
 const REMINDER_KIND_SET: Record<ReminderKind, true> = {
   parking: true,
@@ -69,12 +76,12 @@ function normalizeOptionalText(value: unknown, maxLength: number): string | unde
 function clampDurationSeconds(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
-    return 60;
+    return 1;
   }
 
   const rounded = Math.floor(parsed);
-  if (rounded < 60) {
-    return 60;
+  if (rounded < 1) {
+    return 1;
   }
   if (rounded > 86400 * 14) {
     return 86400 * 14;
@@ -141,6 +148,12 @@ function sanitizeReminderTask(raw: unknown): ReminderTask | null {
   const status = normalizeReminderStatus(value.status);
   const updatedAtUnix = clampUnixSeconds(value.updatedAtUnix, createdAtUnix);
   const firedAtUnix = value.firedAtUnix === undefined ? undefined : clampUnixSeconds(value.firedAtUnix, updatedAtUnix);
+  const acknowledgedAtUnix =
+    value.acknowledgedAtUnix === undefined ? undefined : clampUnixSeconds(value.acknowledgedAtUnix, updatedAtUnix);
+  const requiresAcknowledgement =
+    status === 'fired'
+      ? Boolean(value.requiresAcknowledgement) && !Number.isFinite(acknowledgedAtUnix)
+      : false;
   const cancelledAtUnix =
     value.cancelledAtUnix === undefined ? undefined : clampUnixSeconds(value.cancelledAtUnix, updatedAtUnix);
 
@@ -157,6 +170,8 @@ function sanitizeReminderTask(raw: unknown): ReminderTask | null {
     soundEnabled: value.soundEnabled !== false,
     notificationEnabled: value.notificationEnabled !== false,
     firedAtUnix,
+    requiresAcknowledgement,
+    acknowledgedAtUnix,
     cancelledAtUnix,
   };
 }
@@ -245,6 +260,21 @@ export function markReminderFired(task: ReminderTask, nowUnix = nowUnixSeconds()
     status: 'fired',
     updatedAtUnix: nowUnix,
     firedAtUnix: nowUnix,
+    requiresAcknowledgement: true,
+    acknowledgedAtUnix: undefined,
+  };
+}
+
+export function acknowledgeReminderTask(task: ReminderTask, nowUnix = nowUnixSeconds()): ReminderTask {
+  if (task.status !== 'fired' || !task.requiresAcknowledgement || Number.isFinite(task.acknowledgedAtUnix)) {
+    return task;
+  }
+
+  return {
+    ...task,
+    updatedAtUnix: nowUnix,
+    requiresAcknowledgement: false,
+    acknowledgedAtUnix: nowUnix,
   };
 }
 
@@ -262,3 +292,55 @@ export function formatReminderKind(kind: ReminderKind): string {
   return '自定义';
 }
 
+function sanitizeReminderRingtoneConfig(raw: unknown): ReminderRingtoneConfig | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw as Partial<ReminderRingtoneConfig>;
+  if (typeof value.name !== 'string' || typeof value.mimeType !== 'string' || typeof value.dataUrl !== 'string') {
+    return null;
+  }
+
+  const name = value.name.trim().slice(0, 120);
+  const mimeType = value.mimeType.trim().toLowerCase().slice(0, 100);
+  const dataUrl = value.dataUrl.trim();
+  const updatedAtUnix = clampUnixSeconds(value.updatedAtUnix, nowUnixSeconds());
+
+  if (!name || !mimeType || !dataUrl) {
+    return null;
+  }
+
+  if (!mimeType.startsWith('audio/')) {
+    return null;
+  }
+
+  if (!dataUrl.startsWith(`data:${mimeType}`) && !dataUrl.startsWith('data:audio/')) {
+    return null;
+  }
+
+  return {
+    name,
+    mimeType,
+    dataUrl,
+    updatedAtUnix,
+  };
+}
+
+export function loadReminderRingtoneConfig(): ReminderRingtoneConfig | null {
+  const parsed = safeParse<unknown>(localStorage.getItem(REMINDER_RINGTONE_STORAGE_KEY));
+  return sanitizeReminderRingtoneConfig(parsed);
+}
+
+export function saveReminderRingtoneConfig(config: ReminderRingtoneConfig): void {
+  const normalized = sanitizeReminderRingtoneConfig(config);
+  if (!normalized) {
+    throw new Error('铃声配置无效，无法保存。');
+  }
+
+  localStorage.setItem(REMINDER_RINGTONE_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+export function clearReminderRingtoneConfig(): void {
+  localStorage.removeItem(REMINDER_RINGTONE_STORAGE_KEY);
+}

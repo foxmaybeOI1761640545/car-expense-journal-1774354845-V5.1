@@ -15,6 +15,8 @@ export interface ReminderTask {
   soundEnabled: boolean;
   notificationEnabled: boolean;
   firedAtUnix?: number;
+  requiresAcknowledgement?: boolean;
+  acknowledgedAtUnix?: number;
   cancelledAtUnix?: number;
 }
 
@@ -28,3 +30,9 @@ export interface CreateReminderTaskInput {
   nowUnix?: number;
 }
 
+export interface ReminderRingtoneConfig {
+  name: string;
+  mimeType: string;
+  dataUrl: string;
+  updatedAtUnix: number;
+}
