@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "defaultRingtone": {
+    "name": "默认提醒铃声",
+    "path": "assets/reminder-audio/default-ringtone.mp3",
+    "mimeType": "audio/mpeg"
+  }
+}

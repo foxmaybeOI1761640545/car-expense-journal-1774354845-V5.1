@@ -57,7 +57,7 @@ cd backend
 npm run start
 ```
 
-默认监听：`http://localhost:10080`
+默认监听：`http://localhost:18080`
 
 可用接口：
 - `GET /healthz`
@@ -273,3 +273,4 @@ src/
 
 - 原方案 + Render + UptimeRobot 前后端落地说明见：[docs/RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md](docs/RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md)
 - 新手逐步实施（先做倒计时+在线提醒）见：[docs/ONLINE_REMINDER_RENDER_UPTIMEROBOT_GUIDE.md](docs/ONLINE_REMINDER_RENDER_UPTIMEROBOT_GUIDE.md)
+- 平台实操部署手册（先本地后上线）见：[docs/REMINDER_BACKEND_DEPLOY_RENDER_UPTIMEROBOT.md](docs/REMINDER_BACKEND_DEPLOY_RENDER_UPTIMEROBOT.md)

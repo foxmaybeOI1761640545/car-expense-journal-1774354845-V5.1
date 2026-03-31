@@ -1,17 +1,59 @@
 import http from 'node:http';
 
 const SERVICE_NAME = 'car-journal-reminder-backend';
-const DEFAULT_PORT = 10080;
+const DEFAULT_PORT = 18080;
 const APP_VERSION = (process.env.APP_VERSION || '0.1.0').trim();
-const PORT = Number(process.env.PORT) || DEFAULT_PORT;
-const CORS_ORIGINS = parseCorsOrigins(process.env.CORS_ORIGINS || '');
+const REQUESTED_PORT = Number(process.env.PORT) || DEFAULT_PORT;
+const EXPLICIT_PORT = typeof process.env.PORT === 'string' && process.env.PORT.trim().length > 0;
+const ENABLE_PORT_FALLBACK = parseBooleanEnv(process.env.ENABLE_PORT_FALLBACK, !EXPLICIT_PORT);
+const MAX_PORT_FALLBACK_STEPS = clampInteger(process.env.MAX_PORT_FALLBACK_STEPS, 20, 0, 200);
+const DEFAULT_LOCAL_CORS_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:4173', 'http://127.0.0.1:4173'];
+const CORS_ORIGINS = resolveCorsOrigins(process.env.CORS_ORIGINS || '');
 const startedAt = Date.now();
+let listeningPort = REQUESTED_PORT;
 
 function parseCorsOrigins(raw) {
   return raw
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function resolveCorsOrigins(raw) {
+  const parsed = parseCorsOrigins(raw);
+  if (parsed.length > 0) {
+    return parsed;
+  }
+
+  return [...DEFAULT_LOCAL_CORS_ORIGINS];
+}
+
+function parseBooleanEnv(raw, fallback) {
+  if (typeof raw !== 'string') {
+    return fallback;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) {
+    return fallback;
+  }
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return true;
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return false;
+  }
+  return fallback;
+}
+
+function clampInteger(raw, fallback, min, max) {
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const rounded = Math.floor(parsed);
+  return Math.max(min, Math.min(max, rounded));
 }
 
 function resolveCorsOrigin(origin) {
@@ -80,7 +122,7 @@ function getRuntimeStatus() {
 
 const server = http.createServer((req, res) => {
   const origin = req.headers.origin;
-  const host = req.headers.host || `127.0.0.1:${PORT}`;
+  const host = req.headers.host || `127.0.0.1:${listeningPort}`;
 
   if (!req.url || !req.method) {
     writeJson(res, 400, { ok: false, message: 'Invalid request.' }, origin);
@@ -142,6 +184,62 @@ const server = http.createServer((req, res) => {
   );
 });
 
-server.listen(PORT, () => {
-  console.log(`[${SERVICE_NAME}] listening on port ${PORT}`);
-});
+function listenOnPort(port) {
+  return new Promise((resolve, reject) => {
+    const onError = (error) => {
+      server.off('listening', onListening);
+      reject(error);
+    };
+
+    const onListening = () => {
+      server.off('error', onError);
+      resolve();
+    };
+
+    server.once('error', onError);
+    server.once('listening', onListening);
+    server.listen(port);
+  });
+}
+
+async function startServer() {
+  let port = REQUESTED_PORT;
+  let fallbackSteps = 0;
+
+  while (fallbackSteps <= MAX_PORT_FALLBACK_STEPS) {
+    try {
+      await listenOnPort(port);
+      listeningPort = port;
+      const fallbackUsed = port !== REQUESTED_PORT;
+
+      console.log(`[${SERVICE_NAME}] listening on port ${port}`);
+      console.log(`[${SERVICE_NAME}] cors origins: ${CORS_ORIGINS.join(', ')}`);
+      if (fallbackUsed) {
+        console.warn(`[${SERVICE_NAME}] requested port ${REQUESTED_PORT} is busy, fallback to ${port}`);
+      }
+      return;
+    } catch (error) {
+      if (error && error.code === 'EADDRINUSE') {
+        if (ENABLE_PORT_FALLBACK && fallbackSteps < MAX_PORT_FALLBACK_STEPS) {
+          fallbackSteps += 1;
+          port += 1;
+          continue;
+        }
+
+        console.error(`[${SERVICE_NAME}] port ${port} is already in use.`);
+        console.error(`[${SERVICE_NAME}] hint: set PORT to another value, or stop existing process using this port.`);
+        process.exitCode = 1;
+        return;
+      }
+
+      console.error(`[${SERVICE_NAME}] failed to start server:`, error);
+      process.exitCode = 1;
+      return;
+    }
+  }
+
+  console.error(`[${SERVICE_NAME}] failed to find available port after ${MAX_PORT_FALLBACK_STEPS} fallback attempts.`);
+  process.exitCode = 1;
+}
+
+void startServer();

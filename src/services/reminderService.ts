@@ -2,13 +2,17 @@ import type {
   CreateReminderTaskInput,
   ReminderKind,
   ReminderRingtoneConfig,
+  ReminderRingtoneSourceMode,
   ReminderStatus,
+  ReminderSynthPatternConfig,
   ReminderTask,
 } from '../types/reminder';
 import { nowUnixSeconds } from '../utils/date';
 
 const REMINDER_STORAGE_KEY = 'car-journal-reminders-v1';
 const REMINDER_RINGTONE_STORAGE_KEY = 'car-journal-reminder-ringtone-v1';
+const REMINDER_RINGTONE_SOURCE_MODE_STORAGE_KEY = 'car-journal-reminder-ringtone-source-mode-v1';
+const REMINDER_SYNTH_PATTERN_STORAGE_KEY = 'car-journal-reminder-synth-pattern-v1';
 
 const REMINDER_KIND_SET: Record<ReminderKind, true> = {
   parking: true,
@@ -20,6 +24,28 @@ const REMINDER_STATUS_SET: Record<ReminderStatus, true> = {
   pending: true,
   fired: true,
   cancelled: true,
+};
+
+const REMINDER_RINGTONE_SOURCE_MODE_SET: Record<ReminderRingtoneSourceMode, true> = {
+  auto: true,
+  uploaded: true,
+  'default-file': true,
+  synth: true,
+};
+
+const OSCILLATOR_TYPE_SET: Record<string, true> = {
+  sine: true,
+  square: true,
+  sawtooth: true,
+  triangle: true,
+};
+
+const DEFAULT_SYNTH_PATTERN_BASE = {
+  waveform: 'sine' as OscillatorType,
+  frequencies: [880, 659, 880],
+  toneDurationMs: 130,
+  gapDurationMs: 50,
+  gain: 0.2,
 };
 
 function safeParse<T>(raw: string | null): T | null {
@@ -96,6 +122,59 @@ function clampUnixSeconds(value: unknown, fallbackUnix: number): number {
   }
 
   return Math.floor(parsed);
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function normalizeRingtoneSourceMode(value: unknown): ReminderRingtoneSourceMode {
+  if (typeof value === 'string' && value in REMINDER_RINGTONE_SOURCE_MODE_SET) {
+    return value as ReminderRingtoneSourceMode;
+  }
+  return 'auto';
+}
+
+function sanitizeFrequencies(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [...DEFAULT_SYNTH_PATTERN_BASE.frequencies];
+  }
+
+  const normalized = value
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item))
+    .map((item) => Math.floor(item))
+    .filter((item) => item >= 80 && item <= 4000)
+    .slice(0, 16);
+
+  return normalized.length ? normalized : [...DEFAULT_SYNTH_PATTERN_BASE.frequencies];
+}
+
+function sanitizeSynthPatternConfig(raw: unknown): ReminderSynthPatternConfig {
+  const value = raw && typeof raw === 'object' ? (raw as Partial<ReminderSynthPatternConfig>) : {};
+  const waveform =
+    typeof value.waveform === 'string' && value.waveform in OSCILLATOR_TYPE_SET
+      ? (value.waveform as OscillatorType)
+      : DEFAULT_SYNTH_PATTERN_BASE.waveform;
+  const frequencies = sanitizeFrequencies(value.frequencies);
+  const toneDurationMs = Math.round(clampNumber(value.toneDurationMs, DEFAULT_SYNTH_PATTERN_BASE.toneDurationMs, 40, 2000));
+  const gapDurationMs = Math.round(clampNumber(value.gapDurationMs, DEFAULT_SYNTH_PATTERN_BASE.gapDurationMs, 0, 1200));
+  const gain = Number(clampNumber(value.gain, DEFAULT_SYNTH_PATTERN_BASE.gain, 0.01, 1).toFixed(3));
+  const updatedAtUnix = clampUnixSeconds(value.updatedAtUnix, nowUnixSeconds());
+
+  return {
+    waveform,
+    frequencies,
+    toneDurationMs,
+    gapDurationMs,
+    gain,
+    updatedAtUnix,
+  };
 }
 
 function createReminderId(): string {
@@ -306,6 +385,9 @@ function sanitizeReminderRingtoneConfig(raw: unknown): ReminderRingtoneConfig | 
   const mimeType = value.mimeType.trim().toLowerCase().slice(0, 100);
   const dataUrl = value.dataUrl.trim();
   const updatedAtUnix = clampUnixSeconds(value.updatedAtUnix, nowUnixSeconds());
+  const githubPath = typeof value.githubPath === 'string' ? value.githubPath.trim().slice(0, 400) : undefined;
+  const githubSyncedAtUnix =
+    value.githubSyncedAtUnix === undefined ? undefined : clampUnixSeconds(value.githubSyncedAtUnix, updatedAtUnix);
 
   if (!name || !mimeType || !dataUrl) {
     return null;
@@ -324,6 +406,8 @@ function sanitizeReminderRingtoneConfig(raw: unknown): ReminderRingtoneConfig | 
     mimeType,
     dataUrl,
     updatedAtUnix,
+    githubPath: githubPath || undefined,
+    githubSyncedAtUnix: Number.isFinite(githubSyncedAtUnix) ? githubSyncedAtUnix : undefined,
   };
 }
 
@@ -343,4 +427,39 @@ export function saveReminderRingtoneConfig(config: ReminderRingtoneConfig): void
 
 export function clearReminderRingtoneConfig(): void {
   localStorage.removeItem(REMINDER_RINGTONE_STORAGE_KEY);
+}
+
+export function loadReminderRingtoneSourceMode(): ReminderRingtoneSourceMode {
+  return normalizeRingtoneSourceMode(localStorage.getItem(REMINDER_RINGTONE_SOURCE_MODE_STORAGE_KEY));
+}
+
+export function saveReminderRingtoneSourceMode(mode: ReminderRingtoneSourceMode): void {
+  const normalized = normalizeRingtoneSourceMode(mode);
+  localStorage.setItem(REMINDER_RINGTONE_SOURCE_MODE_STORAGE_KEY, normalized);
+}
+
+export function clearReminderRingtoneSourceModeStorage(): void {
+  localStorage.removeItem(REMINDER_RINGTONE_SOURCE_MODE_STORAGE_KEY);
+}
+
+export function getDefaultReminderSynthPatternConfig(nowUnix = nowUnixSeconds()): ReminderSynthPatternConfig {
+  return {
+    ...DEFAULT_SYNTH_PATTERN_BASE,
+    frequencies: [...DEFAULT_SYNTH_PATTERN_BASE.frequencies],
+    updatedAtUnix: Math.floor(nowUnix),
+  };
+}
+
+export function loadReminderSynthPatternConfig(): ReminderSynthPatternConfig {
+  const parsed = safeParse<unknown>(localStorage.getItem(REMINDER_SYNTH_PATTERN_STORAGE_KEY));
+  return sanitizeSynthPatternConfig(parsed);
+}
+
+export function saveReminderSynthPatternConfig(config: ReminderSynthPatternConfig): void {
+  const normalized = sanitizeSynthPatternConfig(config);
+  localStorage.setItem(REMINDER_SYNTH_PATTERN_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+export function clearReminderSynthPatternConfigStorage(): void {
+  localStorage.removeItem(REMINDER_SYNTH_PATTERN_STORAGE_KEY);
 }

@@ -1,5 +1,6 @@
 import type { AppConfig } from '../types/config';
 import type { AvatarStyle } from '../types/profile';
+import type { ReminderRingtoneSourceMode } from '../types/reminder';
 import type { AppRecord, RecordTombstone, RecordType } from '../types/records';
 import type { FuelBalanceAdjustmentLog } from '../types/store';
 
@@ -59,6 +60,9 @@ const USER_PROFILE_DIR = 'user-profile';
 const USER_PROFILE_DEVICES_DIR = 'devices';
 const USER_AVATAR_DIR = 'avatars';
 const USER_PROFILE_FILE = 'profile.json';
+const REMINDER_AUDIO_DIR = 'reminder-audio';
+const REMINDER_AUDIO_UPLOADS_DIR = 'uploads';
+const REMINDER_AUDIO_PATH_CONFIG_FILE = 'ringtone-paths.json';
 
 export interface GithubUserProfilePayload {
   schemaVersion?: number;
@@ -79,6 +83,42 @@ export interface GithubUserProfilePayload {
 export interface GithubFetchedUserProfile {
   path: string;
   profile: GithubUserProfilePayload;
+}
+
+export interface GithubReminderRingtonePathItem {
+  name: string;
+  path: string;
+  mimeType: string;
+}
+
+export interface GithubReminderDefaultFilePathItem {
+  name?: string;
+  path: string;
+  mimeType?: string;
+}
+
+export interface GithubReminderRingtonePathConfig {
+  schemaVersion: number;
+  updatedAtUnix: number;
+  sourceMode?: ReminderRingtoneSourceMode;
+  uploaded?: GithubReminderRingtonePathItem;
+  defaultFile?: GithubReminderDefaultFilePathItem;
+}
+
+export interface UploadReminderRingtoneToGithubInput {
+  fileName: string;
+  mimeType: string;
+  dataUrl: string;
+  sourceMode?: ReminderRingtoneSourceMode;
+  defaultFile?: GithubReminderDefaultFilePathItem;
+}
+
+export interface UploadReminderRingtoneToGithubResult {
+  audioPath: string;
+  audioSha?: string;
+  configPath: string;
+  configSha?: string;
+  fileName: string;
 }
 
 function toBase64Utf8(value: string): string {
@@ -182,6 +222,213 @@ function normalizeOptionalText(value: unknown): string | undefined {
 
 function normalizeAvatarStyle(value: unknown): AvatarStyle {
   return value === 'square' ? 'square' : 'round';
+}
+
+function normalizeReminderSourceMode(value: unknown): ReminderRingtoneSourceMode | undefined {
+  if (value === 'auto' || value === 'uploaded' || value === 'default-file' || value === 'synth') {
+    return value;
+  }
+
+  return undefined;
+}
+
+function normalizeReminderAudioMimeType(value: unknown): string | undefined {
+  const mimeType = normalizeOptionalText(value)?.toLowerCase();
+  if (!mimeType || !mimeType.startsWith('audio/')) {
+    return undefined;
+  }
+
+  return mimeType;
+}
+
+function normalizeReminderAudioPath(value: unknown): string | undefined {
+  const path = normalizeOptionalText(value)?.replace(/^\/+/, '');
+  if (!path) {
+    return undefined;
+  }
+
+  if (path.includes('..')) {
+    return undefined;
+  }
+
+  return path;
+}
+
+function normalizeReminderAudioName(value: unknown): string | undefined {
+  const name = normalizeOptionalText(value);
+  if (!name) {
+    return undefined;
+  }
+
+  return name.slice(0, 120);
+}
+
+function sanitizeReminderAudioFileName(fileName: string): string {
+  const [namePartRaw, extensionPartRaw] = fileName.trim().split(/\.(?=[^.]+$)/);
+  const fallbackName = 'custom-ringtone';
+  const fallbackExtension = 'mp3';
+
+  const safeNamePart = (namePartRaw ?? fallbackName)
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^\.+|\.+$/g, '')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+
+  const safeExtension = (extensionPartRaw ?? fallbackExtension)
+    .replace(/[^a-z0-9]/gi, '')
+    .toLowerCase()
+    .slice(0, 10);
+
+  const normalizedName = safeNamePart || fallbackName;
+  const normalizedExtension = safeExtension || fallbackExtension;
+  return `${normalizedName}.${normalizedExtension}`;
+}
+
+function detectAudioExtensionByMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized === 'audio/mpeg' || normalized === 'audio/mp3') {
+    return 'mp3';
+  }
+  if (normalized === 'audio/wav' || normalized === 'audio/x-wav' || normalized === 'audio/wave') {
+    return 'wav';
+  }
+  if (normalized === 'audio/ogg') {
+    return 'ogg';
+  }
+  if (normalized === 'audio/webm') {
+    return 'webm';
+  }
+  if (normalized === 'audio/mp4') {
+    return 'm4a';
+  }
+  if (normalized === 'audio/aac') {
+    return 'aac';
+  }
+  if (normalized === 'audio/flac' || normalized === 'audio/x-flac') {
+    return 'flac';
+  }
+  if (normalized === 'audio/opus') {
+    return 'opus';
+  }
+  if (normalized === 'audio/aiff') {
+    return 'aiff';
+  }
+  return 'mp3';
+}
+
+function inferAudioMimeTypeFromPath(path: string): string {
+  const lowerPath = path.toLowerCase();
+  if (lowerPath.endsWith('.wav')) {
+    return 'audio/wav';
+  }
+  if (lowerPath.endsWith('.ogg')) {
+    return 'audio/ogg';
+  }
+  if (lowerPath.endsWith('.webm')) {
+    return 'audio/webm';
+  }
+  if (lowerPath.endsWith('.m4a') || lowerPath.endsWith('.mp4')) {
+    return 'audio/mp4';
+  }
+  if (lowerPath.endsWith('.aac')) {
+    return 'audio/aac';
+  }
+  if (lowerPath.endsWith('.flac')) {
+    return 'audio/flac';
+  }
+  if (lowerPath.endsWith('.opus')) {
+    return 'audio/opus';
+  }
+  if (lowerPath.endsWith('.aiff')) {
+    return 'audio/aiff';
+  }
+  return 'audio/mpeg';
+}
+
+function normalizeAudioDataUrlForGithub(dataUrl: string): { mimeType: string; base64: string } {
+  const normalized = dataUrl.trim();
+  const match = /^data:(audio\/[a-z0-9!#$&^_.+-]+);base64,([a-z0-9+/=\r\n]+)$/i.exec(normalized);
+
+  if (!match) {
+    throw new Error('铃声数据格式无效，仅支持音频 base64 Data URL。');
+  }
+
+  const mimeType = normalizeReminderAudioMimeType(match[1]);
+  if (!mimeType) {
+    throw new Error('铃声 MIME 类型无效。');
+  }
+
+  return {
+    mimeType,
+    base64: match[2].replace(/[\r\n]/g, ''),
+  };
+}
+
+function normalizeReminderPathItem(raw: unknown): GithubReminderRingtonePathItem | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw as Partial<GithubReminderRingtonePathItem>;
+  const name = normalizeReminderAudioName(value.name);
+  const path = normalizeReminderAudioPath(value.path);
+  const mimeType = normalizeReminderAudioMimeType(value.mimeType);
+
+  if (!name || !path || !mimeType) {
+    return null;
+  }
+
+  return {
+    name,
+    path,
+    mimeType,
+  };
+}
+
+function normalizeReminderDefaultFilePathItem(raw: unknown): GithubReminderDefaultFilePathItem | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+
+  const value = raw as Partial<GithubReminderDefaultFilePathItem>;
+  const path = normalizeReminderAudioPath(value.path);
+  if (!path) {
+    return undefined;
+  }
+
+  const name = normalizeReminderAudioName(value.name);
+  const mimeType = normalizeReminderAudioMimeType(value.mimeType);
+
+  return {
+    name,
+    path,
+    mimeType,
+  };
+}
+
+function normalizeReminderRingtonePathConfig(raw: unknown): GithubReminderRingtonePathConfig | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw as Partial<GithubReminderRingtonePathConfig>;
+  const uploaded = normalizeReminderPathItem(value.uploaded);
+  const defaultFile = normalizeReminderDefaultFilePathItem(value.defaultFile);
+  const sourceMode = normalizeReminderSourceMode(value.sourceMode);
+
+  if (!uploaded && !defaultFile) {
+    return null;
+  }
+
+  return {
+    schemaVersion: Number.isFinite(value.schemaVersion) ? Math.max(1, Math.floor(Number(value.schemaVersion))) : 1,
+    updatedAtUnix: Number.isFinite(value.updatedAtUnix) ? Math.floor(Number(value.updatedAtUnix)) : Math.floor(Date.now() / 1000),
+    sourceMode,
+    uploaded: uploaded ?? undefined,
+    defaultFile,
+  };
 }
 
 function normalizeRecordPayload(value: unknown): unknown[] {
@@ -404,6 +651,19 @@ function getRecordPath(config: AppConfig, recordId: string): string {
 function getRecordTombstonePath(config: AppConfig, recordId: string): string {
   const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
   return `${recordsDir}/${RECORD_TOMBSTONES_DIR}/${recordId}.json`;
+}
+
+function getReminderAudioBaseDir(config: AppConfig): string {
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  return `${recordsDir}/${REMINDER_AUDIO_DIR}`;
+}
+
+function getReminderAudioUploadPath(config: AppConfig, fileName: string): string {
+  return `${getReminderAudioBaseDir(config)}/${REMINDER_AUDIO_UPLOADS_DIR}/${fileName}`;
+}
+
+function getReminderAudioPathConfigPath(config: AppConfig): string {
+  return `${getReminderAudioBaseDir(config)}/${REMINDER_AUDIO_PATH_CONFIG_FILE}`;
 }
 
 function normalizeDataUrlForGithubAvatar(dataUrl: string): { base64: string; extension: string } {
@@ -811,4 +1071,143 @@ export async function appendFuelBalanceAdjustmentToGithub(
     path: data.content?.path ?? path,
     sha: data.content?.sha,
   };
+}
+
+export async function uploadReminderRingtoneToGithub(
+  input: UploadReminderRingtoneToGithubInput,
+  config: AppConfig,
+  token: string,
+): Promise<UploadReminderRingtoneToGithubResult> {
+  validateGithubConfig(config, token);
+
+  const fileNameRaw = normalizeReminderAudioName(input.fileName) ?? 'custom-ringtone';
+  const parsedDataUrl = normalizeAudioDataUrlForGithub(input.dataUrl);
+  const mimeType = normalizeReminderAudioMimeType(input.mimeType) ?? parsedDataUrl.mimeType;
+  const safeFileName = sanitizeReminderAudioFileName(fileNameRaw || `custom-ringtone.${detectAudioExtensionByMimeType(mimeType)}`);
+  const audioPath = getReminderAudioUploadPath(config, safeFileName);
+  const audioEndpoint = makeGithubEndpoint(config, audioPath);
+  const currentAudioBody = await fetchGithubFileBody(config, token, audioPath, { allowNotFound: true });
+  const audioPayload = makePutPayload(
+    {
+      message: `chore(reminder): upload ringtone ${safeFileName}`,
+      content: parsedDataUrl.base64,
+      sha: currentAudioBody?.sha,
+    },
+    config,
+  );
+
+  const uploadResponse = await fetch(audioEndpoint, {
+    method: 'PUT',
+    headers: makeGithubHeaders(token),
+    body: JSON.stringify(audioPayload),
+  });
+
+  if (!uploadResponse.ok) {
+    const body = (await uploadResponse.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${uploadResponse.status}`;
+    throw new Error(`GitHub 铃声上传失败：${message}`);
+  }
+
+  const uploadedAudio = (await uploadResponse.json()) as { content?: { path?: string; sha?: string } };
+  const uploadedAudioPath = uploadedAudio.content?.path ?? audioPath;
+
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const configPayload: GithubReminderRingtonePathConfig = {
+    schemaVersion: 1,
+    updatedAtUnix: nowUnix,
+    sourceMode: normalizeReminderSourceMode(input.sourceMode),
+    uploaded: {
+      name: fileNameRaw,
+      path: uploadedAudioPath,
+      mimeType,
+    },
+    defaultFile: normalizeReminderDefaultFilePathItem(input.defaultFile),
+  };
+
+  const configPath = getReminderAudioPathConfigPath(config);
+  const configEndpoint = makeGithubEndpoint(config, configPath);
+  const currentConfigBody = await fetchGithubFileBody(config, token, configPath, { allowNotFound: true });
+  const configPutPayload = makePutPayload(
+    {
+      message: `chore(reminder): update ringtone path config ${nowUnix}`,
+      content: toBase64Utf8(JSON.stringify(configPayload, null, 2)),
+      sha: currentConfigBody?.sha,
+    },
+    config,
+  );
+
+  const configResponse = await fetch(configEndpoint, {
+    method: 'PUT',
+    headers: makeGithubHeaders(token),
+    body: JSON.stringify(configPutPayload),
+  });
+
+  if (!configResponse.ok) {
+    const body = (await configResponse.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${configResponse.status}`;
+    throw new Error(`GitHub 铃声路径配置写入失败：${message}`);
+  }
+
+  const uploadedConfig = (await configResponse.json()) as { content?: { path?: string; sha?: string } };
+  return {
+    fileName: safeFileName,
+    audioPath: uploadedAudioPath,
+    audioSha: uploadedAudio.content?.sha,
+    configPath: uploadedConfig.content?.path ?? configPath,
+    configSha: uploadedConfig.content?.sha,
+  };
+}
+
+export async function fetchReminderRingtonePathConfigFromGithub(
+  config: AppConfig,
+  token: string,
+): Promise<GithubReminderRingtonePathConfig | null> {
+  validateGithubConfig(config, token);
+
+  const configPath = getReminderAudioPathConfigPath(config);
+  const body = await fetchGithubFileBody(config, token, configPath, { allowNotFound: true });
+  if (!body) {
+    return null;
+  }
+
+  if (body.encoding !== 'base64' || typeof body.content !== 'string') {
+    throw new Error(`GitHub 提醒铃声路径配置格式不支持：${configPath}`);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fromBase64Utf8(body.content));
+  } catch {
+    throw new Error(`GitHub 提醒铃声路径配置不是有效 JSON：${configPath}`);
+  }
+
+  const normalized = normalizeReminderRingtonePathConfig(parsed);
+  if (!normalized) {
+    throw new Error(`GitHub 提醒铃声路径配置内容无效：${configPath}`);
+  }
+
+  return normalized;
+}
+
+export async function fetchReminderAudioDataUrlFromGithub(
+  audioPath: string,
+  config: AppConfig,
+  token: string,
+  mimeTypeHint?: string,
+): Promise<string> {
+  validateGithubConfig(config, token);
+
+  const normalizedPath = normalizeReminderAudioPath(audioPath);
+  if (!normalizedPath) {
+    throw new Error('提醒铃声路径无效。');
+  }
+
+  const body = await fetchGithubFileBody(config, token, normalizedPath);
+  if (!body || body.encoding !== 'base64' || typeof body.content !== 'string') {
+    throw new Error(`GitHub 提醒铃声读取失败：${normalizedPath}`);
+  }
+
+  const mimeType = normalizeReminderAudioMimeType(mimeTypeHint) ?? inferAudioMimeTypeFromPath(normalizedPath);
+  const base64 = body.content.replace(/[\r\n]/g, '');
+  return `data:${mimeType};base64,${base64}`;
 }
