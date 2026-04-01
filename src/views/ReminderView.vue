@@ -32,16 +32,17 @@
               停车提醒
             </button>
           </div>
-          <label v-if="formKind === 'custom'">
-            倒计时分钟数
+          <label v-if="formKind === 'custom' || formKind === 'parking'">
+            {{ formKind === 'parking' ? '停车倒计时分钟数' : '倒计时分钟数' }}
             <input v-model.number="formDurationMinutes" type="number" min="0" max="20160" step="1" />
           </label>
-          <label v-if="formKind === 'custom'">
+          <label v-if="formKind === 'custom' || formKind === 'parking'">
             秒（默认 00）
             <input v-model.number="formDurationSeconds" type="number" min="0" max="59" step="1" />
           </label>
-          <p v-if="formKind === 'custom'" class="hint full-width">当前总时长：{{ formattedFormDuration }}</p>
-          <p v-if="formKind === 'parking'" class="hint full-width">固定时长：180 分钟 00 秒</p>
+          <p v-if="formKind === 'custom' || formKind === 'parking'" class="hint full-width">
+            {{ formKind === 'parking' ? `默认 135 分钟 00 秒，可修改。当前总时长：${formattedFormDuration}` : `当前总时长：${formattedFormDuration}` }}
+          </p>
           <div v-if="formKind === 'custom-time'" class="form-grid full-width">
             <label>
               日期时间输入方式
@@ -391,7 +392,7 @@ interface ActiveRingtoneTarget {
 type FormReminderKind = 'custom' | 'custom-time' | 'parking';
 
 const MOBILE_BREAKPOINT = 767;
-const PARKING_DURATION_SECONDS = 180 * 60;
+const PARKING_DEFAULT_DURATION_SECONDS = 135 * 60;
 const MANUAL_DATE_TIME_REGEX = /^\s*(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?\s*$/;
 const MANUAL_REPEAT_WEEKDAYS_REGEX = /^\s*(?:[1-7](?:\s*[,，]\s*[1-7])*)?\s*$/;
 
@@ -608,7 +609,7 @@ watch(
 
 watch(formKind, (value) => {
   if (value === 'parking') {
-    formDurationMinutes.value = PARKING_DURATION_SECONDS / 60;
+    formDurationMinutes.value = PARKING_DEFAULT_DURATION_SECONDS / 60;
     formDurationSeconds.value = 0;
     if (!formTitle.value.trim()) {
       formTitle.value = '停车提醒';
@@ -949,11 +950,12 @@ function handleCreateReminder(): void {
 
   try {
     if (formKind.value === 'parking') {
+      const durationSeconds = resolveCountdownDurationSecondsFromForm();
       task = createReminderTask({
         kind: 'parking',
         title: formTitle.value,
         note: formNote.value,
-        durationSeconds: PARKING_DURATION_SECONDS,
+        durationSeconds,
         scheduleMode: 'countdown',
         soundEnabled: formSoundEnabled.value,
         notificationEnabled: formNotificationEnabled.value,
@@ -1010,7 +1012,7 @@ function handleCreateReminder(): void {
     formDurationMinutes.value = 0;
     formDurationSeconds.value = 0;
   } else {
-    formDurationMinutes.value = 180;
+    formDurationMinutes.value = PARKING_DEFAULT_DURATION_SECONDS / 60;
     formDurationSeconds.value = 0;
   }
 
