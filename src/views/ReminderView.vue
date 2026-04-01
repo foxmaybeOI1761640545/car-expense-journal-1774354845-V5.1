@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <main class="page page--reminder">
     <PageHeader title="提醒中心" description="支持停车提醒、番茄钟与自定义倒计时；页面保持打开时可在线提醒。" />
 
@@ -112,11 +112,11 @@
         <section class="reminder-subsection">
           <h3>GitHub 铃声同步（可选）</h3>
           <div class="inline-actions">
-            <button class="btn btn--ghost" type="button" :disabled="!customRingtoneConfig || pushingToGithub" @click="syncCustomRingtoneToGithub">
-              {{ pushingToGithub ? '同步中...' : '同步当前上传铃声到 GitHub' }}
+            <button class="btn btn--ghost" type="button" :disabled="pushingToGithub" @click="syncCustomRingtoneToGithub">
+              {{ pushingToGithub ? '同步中...' : '同步当前铃声配置到 GitHub' }}
             </button>
             <button class="btn btn--ghost" type="button" :disabled="pullingFromGithub" @click="syncCustomRingtoneFromGithub">
-              {{ pullingFromGithub ? '拉取中...' : '从 GitHub 拉取铃声' }}
+              {{ pullingFromGithub ? '拉取中...' : '从 GitHub 拉取铃声配置' }}
             </button>
           </div>
           <p class="hint">GitHub 配置：{{ githubConfigStatusText }}</p>
@@ -223,6 +223,7 @@ import PageHeader from '../components/PageHeader.vue';
 import {
   fetchReminderAudioDataUrlFromGithub,
   fetchReminderRingtonePathConfigFromGithub,
+  syncReminderRingtonePathConfigToGithub,
   uploadReminderRingtoneToGithub,
 } from '../services/githubService';
 import { loadReminderDefaultAudioAsset, type ReminderResolvedDefaultAudioAsset } from '../services/reminderAudioAssetService';
@@ -1365,10 +1366,6 @@ function buildDefaultFileSyncPayload():
 }
 
 async function syncCustomRingtoneToGithub(): Promise<void> {
-  if (!customRingtoneConfig.value) {
-    store.showToast('请先上传自定义铃声，再执行同步。', 'error');
-    return;
-  }
   if (pushingToGithub.value) {
     return;
   }
@@ -1383,37 +1380,56 @@ async function syncCustomRingtoneToGithub(): Promise<void> {
 
   pushingToGithub.value = true;
   githubSyncStatus.value = 'syncing';
-  githubSyncMessage.value = '正在上传自定义铃声...';
+  githubSyncMessage.value = customRingtoneConfig.value ? '正在上传自定义铃声并同步配置...' : '正在同步 DIY 参数与铃声配置...';
 
   try {
     const current = customRingtoneConfig.value;
-    if (!current) {
-      throw new Error('当前没有可同步的上传铃声。');
+    const defaultFile = buildDefaultFileSyncPayload();
+    const synth = synthPatternConfig.value;
+
+    if (current) {
+      const result = await uploadReminderRingtoneToGithub(
+        {
+          fileName: current.name,
+          mimeType: current.mimeType,
+          dataUrl: current.dataUrl,
+          sourceMode: ringtoneSourceMode.value,
+          defaultFile,
+          synth,
+        },
+        store.state.config,
+        token,
+      );
+
+      const nextConfig: ReminderRingtoneConfig = {
+        ...current,
+        githubPath: result.audioPath,
+        githubSyncedAtUnix: nowUnixSeconds(),
+      };
+      saveReminderRingtoneConfig(nextConfig);
+      customRingtoneConfig.value = nextConfig;
+
+      githubSyncStatus.value = 'success';
+      githubSyncMessage.value = `已同步铃声：${result.audioPath}；配置：${result.configPath}`;
+      store.showToast('上传铃声与 DIY 参数已同步到 GitHub。', 'success');
+      return;
     }
 
-    const result = await uploadReminderRingtoneToGithub(
+    const remoteConfig = await fetchReminderRingtonePathConfigFromGithub(store.state.config, token);
+    const synced = await syncReminderRingtonePathConfigToGithub(
       {
-        fileName: current.name,
-        mimeType: current.mimeType,
-        dataUrl: current.dataUrl,
         sourceMode: ringtoneSourceMode.value,
-        defaultFile: buildDefaultFileSyncPayload(),
+        uploaded: remoteConfig?.uploaded,
+        defaultFile,
+        synth,
       },
       store.state.config,
       token,
     );
 
-    const nextConfig: ReminderRingtoneConfig = {
-      ...current,
-      githubPath: result.audioPath,
-      githubSyncedAtUnix: nowUnixSeconds(),
-    };
-    saveReminderRingtoneConfig(nextConfig);
-    customRingtoneConfig.value = nextConfig;
-
     githubSyncStatus.value = 'success';
-    githubSyncMessage.value = `已同步铃声：${result.audioPath}；配置：${result.configPath}`;
-    store.showToast('自定义铃声已同步到 GitHub。', 'success');
+    githubSyncMessage.value = `已同步铃声配置：${synced.configPath}`;
+    store.showToast('DIY 参数已同步到 GitHub。', 'success');
   } catch (error) {
     githubSyncStatus.value = 'error';
     githubSyncMessage.value = error instanceof Error ? error.message : '同步失败。';
@@ -1442,37 +1458,62 @@ async function syncCustomRingtoneFromGithub(): Promise<void> {
 
   try {
     const remoteConfig = await fetchReminderRingtonePathConfigFromGithub(store.state.config, token);
-    if (!remoteConfig || !remoteConfig.uploaded) {
-      throw new Error('GitHub 中未找到已同步的上传铃声配置。');
+    if (!remoteConfig) {
+      throw new Error('GitHub 中未找到已同步的铃声配置。');
     }
 
-    const dataUrl = await fetchReminderAudioDataUrlFromGithub(
-      remoteConfig.uploaded.path,
-      store.state.config,
-      token,
-      remoteConfig.uploaded.mimeType,
-    );
-    const pulledConfig: ReminderRingtoneConfig = {
-      name: remoteConfig.uploaded.name,
-      mimeType: remoteConfig.uploaded.mimeType,
-      dataUrl,
-      updatedAtUnix: nowUnixSeconds(),
-      githubPath: remoteConfig.uploaded.path,
-      githubSyncedAtUnix: nowUnixSeconds(),
-    };
-    saveReminderRingtoneConfig(pulledConfig);
-    customRingtoneConfig.value = pulledConfig;
+    const pulledParts: string[] = [];
+
+    if (remoteConfig.uploaded) {
+      const dataUrl = await fetchReminderAudioDataUrlFromGithub(
+        remoteConfig.uploaded.path,
+        store.state.config,
+        token,
+        remoteConfig.uploaded.mimeType,
+      );
+      const pulledConfig: ReminderRingtoneConfig = {
+        name: remoteConfig.uploaded.name,
+        mimeType: remoteConfig.uploaded.mimeType,
+        dataUrl,
+        updatedAtUnix: nowUnixSeconds(),
+        githubPath: remoteConfig.uploaded.path,
+        githubSyncedAtUnix: nowUnixSeconds(),
+      };
+      saveReminderRingtoneConfig(pulledConfig);
+      customRingtoneConfig.value = pulledConfig;
+      pulledParts.push('上传铃声');
+    }
+
+    if (remoteConfig.synth) {
+      const pulledSynth: ReminderSynthPatternConfig = {
+        waveform: remoteConfig.synth.waveform,
+        frequencies: [...remoteConfig.synth.frequencies],
+        toneDurationMs: remoteConfig.synth.toneDurationMs,
+        gapDurationMs: remoteConfig.synth.gapDurationMs,
+        gain: remoteConfig.synth.gain,
+        updatedAtUnix: remoteConfig.synth.updatedAtUnix,
+      };
+      saveReminderSynthPatternConfig(pulledSynth);
+      synthPatternConfig.value = pulledSynth;
+      syncSynthInputsFromConfig(pulledSynth);
+      pulledParts.push('DIY 参数');
+    }
 
     if (remoteConfig.sourceMode) {
       ringtoneSourceMode.value = remoteConfig.sourceMode;
       saveReminderRingtoneSourceMode(remoteConfig.sourceMode);
+      pulledParts.push(`铃声策略（${remoteConfig.sourceMode}）`);
+    }
+
+    if (pulledParts.length === 0) {
+      pulledParts.push('配置元数据');
     }
 
     githubSyncStatus.value = 'success';
-    githubSyncMessage.value = `已拉取铃声：${remoteConfig.uploaded.path}`;
+    githubSyncMessage.value = `已拉取：${pulledParts.join('、')}`;
     stopLoopingSound();
     void syncLoopingSoundLoop();
-    store.showToast('已从 GitHub 拉取自定义铃声。', 'success');
+    store.showToast('已从 GitHub 拉取铃声配置。', 'success');
   } catch (error) {
     githubSyncStatus.value = 'error';
     githubSyncMessage.value = error instanceof Error ? error.message : '拉取失败。';

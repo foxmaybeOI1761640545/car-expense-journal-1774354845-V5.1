@@ -1,6 +1,6 @@
 import type { AppConfig } from '../types/config';
 import type { AvatarStyle } from '../types/profile';
-import type { ReminderRingtoneSourceMode } from '../types/reminder';
+import type { ReminderRingtoneSourceMode, ReminderSynthPatternConfig } from '../types/reminder';
 import type { AppRecord, RecordTombstone, RecordType } from '../types/records';
 import type { FuelBalanceAdjustmentLog } from '../types/store';
 
@@ -97,12 +97,22 @@ export interface GithubReminderDefaultFilePathItem {
   mimeType?: string;
 }
 
+export interface GithubReminderSynthPatternItem {
+  waveform: OscillatorType;
+  frequencies: number[];
+  toneDurationMs: number;
+  gapDurationMs: number;
+  gain: number;
+  updatedAtUnix: number;
+}
+
 export interface GithubReminderRingtonePathConfig {
   schemaVersion: number;
   updatedAtUnix: number;
   sourceMode?: ReminderRingtoneSourceMode;
   uploaded?: GithubReminderRingtonePathItem;
   defaultFile?: GithubReminderDefaultFilePathItem;
+  synth?: GithubReminderSynthPatternItem;
 }
 
 export interface UploadReminderRingtoneToGithubInput {
@@ -111,6 +121,7 @@ export interface UploadReminderRingtoneToGithubInput {
   dataUrl: string;
   sourceMode?: ReminderRingtoneSourceMode;
   defaultFile?: GithubReminderDefaultFilePathItem;
+  synth?: ReminderSynthPatternConfig;
 }
 
 export interface UploadReminderRingtoneToGithubResult {
@@ -119,6 +130,19 @@ export interface UploadReminderRingtoneToGithubResult {
   configPath: string;
   configSha?: string;
   fileName: string;
+}
+
+export interface SyncReminderRingtonePathConfigToGithubInput {
+  sourceMode?: ReminderRingtoneSourceMode;
+  uploaded?: GithubReminderRingtonePathItem;
+  defaultFile?: GithubReminderDefaultFilePathItem;
+  synth?: ReminderSynthPatternConfig;
+}
+
+export interface SyncReminderRingtonePathConfigToGithubResult {
+  configPath: string;
+  configSha?: string;
+  updatedAtUnix: number;
 }
 
 function toBase64Utf8(value: string): string {
@@ -169,11 +193,11 @@ function validateGithubConfig(config: AppConfig, token: string): void {
   const missing = requiredFields.filter((field) => !String(config[field] ?? '').trim());
 
   if (missing.length > 0 || !token.trim()) {
-    throw new Error('GitHub 配置不完整，请先填写 owner/repo/token/recordsDir。');
+    throw new Error('GitHub configuration is incomplete. Please set owner/repo/token/recordsDir first.');
   }
 
   if (isSealedGithubToken(token) && !normalizeBackendBaseUrl(config)) {
-    throw new Error('当前 Token 为后端密封 Token，请先配置提醒后端地址（reminderApiBaseUrl）。');
+    throw new Error('Sealed token is used but reminderApiBaseUrl is empty.');
   }
 }
 
@@ -232,7 +256,7 @@ async function fetchGithubContentsGet(
   if (isSealedGithubToken(token)) {
     const backendBaseUrl = normalizeBackendBaseUrl(config);
     if (!backendBaseUrl) {
-      throw new Error('当前 Token 为后端密封 Token，请先配置提醒后端地址（reminderApiBaseUrl）。');
+      throw new Error('Sealed token is used but reminderApiBaseUrl is empty.');
     }
 
     return fetch(`${backendBaseUrl}/api/github/contents/${mode}`, {
@@ -268,7 +292,7 @@ async function fetchGithubContentsPut(
   if (isSealedGithubToken(token)) {
     const backendBaseUrl = normalizeBackendBaseUrl(config);
     if (!backendBaseUrl) {
-      throw new Error('当前 Token 为后端密封 Token，请先配置提醒后端地址（reminderApiBaseUrl）。');
+      throw new Error('Sealed token is used but reminderApiBaseUrl is empty.');
     }
 
     return fetch(`${backendBaseUrl}/api/github/contents/put`, {
@@ -437,12 +461,12 @@ function normalizeAudioDataUrlForGithub(dataUrl: string): { mimeType: string; ba
   const match = /^data:(audio\/[a-z0-9!#$&^_.+-]+);base64,([a-z0-9+/=\r\n]+)$/i.exec(normalized);
 
   if (!match) {
-    throw new Error('铃声数据格式无效，仅支持音频 base64 Data URL。');
+    throw new Error('Invalid ringtone data URL. Only audio base64 Data URL is supported.');
   }
 
   const mimeType = normalizeReminderAudioMimeType(match[1]);
   if (!mimeType) {
-    throw new Error('铃声 MIME 类型无效。');
+    throw new Error('Invalid ringtone MIME type.');
   }
 
   return {
@@ -493,6 +517,58 @@ function normalizeReminderDefaultFilePathItem(raw: unknown): GithubReminderDefau
   };
 }
 
+function normalizeReminderSynthPatternFrequencies(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item))
+    .map((item) => Math.floor(item))
+    .filter((item) => item >= 80 && item <= 4000)
+    .slice(0, 16);
+}
+
+function normalizeReminderSynthPatternItem(raw: unknown, fallbackUnix = Math.floor(Date.now() / 1000)): GithubReminderSynthPatternItem | undefined {
+  if (!raw || typeof raw !== 'object') {
+    return undefined;
+  }
+
+  const value = raw as Partial<GithubReminderSynthPatternItem>;
+  const waveform =
+    value.waveform === 'sine' || value.waveform === 'square' || value.waveform === 'triangle' || value.waveform === 'sawtooth'
+      ? value.waveform
+      : undefined;
+  const frequencies = normalizeReminderSynthPatternFrequencies(value.frequencies);
+  const toneDurationMs = Math.floor(Number(value.toneDurationMs));
+  const gapDurationMs = Math.floor(Number(value.gapDurationMs));
+  const gain = Number(value.gain);
+  const updatedAtUnix = Number.isFinite(value.updatedAtUnix) ? Math.floor(Number(value.updatedAtUnix)) : fallbackUnix;
+
+  if (!waveform || frequencies.length === 0) {
+    return undefined;
+  }
+  if (!Number.isFinite(toneDurationMs) || toneDurationMs < 40 || toneDurationMs > 2000) {
+    return undefined;
+  }
+  if (!Number.isFinite(gapDurationMs) || gapDurationMs < 0 || gapDurationMs > 1200) {
+    return undefined;
+  }
+  if (!Number.isFinite(gain) || gain < 0.01 || gain > 1) {
+    return undefined;
+  }
+
+  return {
+    waveform,
+    frequencies,
+    toneDurationMs,
+    gapDurationMs,
+    gain: Number(gain.toFixed(3)),
+    updatedAtUnix,
+  };
+}
+
 function normalizeReminderRingtonePathConfig(raw: unknown): GithubReminderRingtonePathConfig | null {
   if (!raw || typeof raw !== 'object') {
     return null;
@@ -502,8 +578,9 @@ function normalizeReminderRingtonePathConfig(raw: unknown): GithubReminderRingto
   const uploaded = normalizeReminderPathItem(value.uploaded);
   const defaultFile = normalizeReminderDefaultFilePathItem(value.defaultFile);
   const sourceMode = normalizeReminderSourceMode(value.sourceMode);
+  const synth = normalizeReminderSynthPatternItem(value.synth);
 
-  if (!uploaded && !defaultFile) {
+  if (!uploaded && !defaultFile && !synth) {
     return null;
   }
 
@@ -513,6 +590,7 @@ function normalizeReminderRingtonePathConfig(raw: unknown): GithubReminderRingto
     sourceMode,
     uploaded: uploaded ?? undefined,
     defaultFile,
+    synth,
   };
 }
 
@@ -638,7 +716,7 @@ async function fetchGithubDirectoryItems(
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${response.status}`;
-    throw new Error(`GitHub 读取失败：${message}`);
+    throw new Error(`GitHub 璇诲彇澶辫触锛${message}`);
   }
 
   const body = (await response.json()) as GithubContentItem[] | GithubContentItem;
@@ -660,7 +738,7 @@ async function fetchGithubFileBody(
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${response.status}`;
-    throw new Error(`GitHub 读取失败：${message}`);
+    throw new Error(`GitHub 璇诲彇澶辫触锛${message}`);
   }
 
   return (await response.json()) as GithubContentFileBody;
@@ -669,17 +747,17 @@ async function fetchGithubFileBody(
 async function fetchAndParseJsonFile(config: AppConfig, token: string, path: string): Promise<unknown> {
   const fileBody = await fetchGithubFileBody(config, token, path);
   if (!fileBody) {
-    throw new Error(`GitHub 文件不存在：${path}`);
+    throw new Error(`GitHub 鏂囦欢涓嶅瓨鍦細${path}`);
   }
 
   if (fileBody.encoding !== 'base64' || typeof fileBody.content !== 'string') {
-    throw new Error(`GitHub 文件格式不支持：${path}`);
+    throw new Error(`GitHub 鏂囦欢鏍煎紡涓嶆敮鎸侊細${path}`);
   }
 
   try {
     return JSON.parse(fromBase64Utf8(fileBody.content));
   } catch {
-    throw new Error(`GitHub 文件不是有效 JSON：${path}`);
+    throw new Error(`GitHub 鏂囦欢涓嶆槸鏈夋晥 JSON锛${path}`);
   }
 }
 
@@ -732,7 +810,7 @@ function normalizeDataUrlForGithubAvatar(dataUrl: string): { base64: string; ext
   const match = /^data:(image\/(?:png|jpeg));base64,([a-z0-9+/=\r\n]+)$/i.exec(normalized);
 
   if (!match) {
-    throw new Error('头像格式无效，仅支持 PNG/JPEG 的 base64 Data URL。');
+    throw new Error('Invalid avatar data URL. Only PNG/JPEG base64 Data URL is supported.');
   }
 
   const extension = match[1].toLowerCase() === 'image/png' ? 'png' : 'jpg';
@@ -790,7 +868,7 @@ export async function submitRecordToGithub(record: AppRecord, config: AppConfig,
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${response.status}`;
-    throw new Error(`GitHub 提交失败：${message}`);
+    throw new Error(`GitHub 鎻愪氦澶辫触锛${message}`);
   }
 
   const data = (await response.json()) as { content?: { path?: string; sha?: string } };
@@ -853,7 +931,7 @@ export async function submitRecordTombstoneToGithub(
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${response.status}`;
-    throw new Error(`GitHub 提交失败：${message}`);
+    throw new Error(`GitHub 鎻愪氦澶辫触锛${message}`);
   }
 
   const data = (await response.json()) as { content?: { path?: string; sha?: string } };
@@ -929,7 +1007,7 @@ export async function uploadUserAvatarToGithub(
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${response.status}`;
-    throw new Error(`GitHub 提交失败：${message}`);
+    throw new Error(`GitHub 鎻愪氦澶辫触锛${message}`);
   }
 
   const data = (await response.json()) as { content?: { path?: string; sha?: string } };
@@ -964,7 +1042,7 @@ export async function submitUserProfileToGithub(
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${response.status}`;
-    throw new Error(`GitHub 提交失败：${message}`);
+    throw new Error(`GitHub 鎻愪氦澶辫触锛${message}`);
   }
 
   const data = (await response.json()) as { content?: { path?: string; sha?: string } };
@@ -989,19 +1067,19 @@ export async function fetchUserProfileFromGithub(
   }
 
   if (body.encoding !== 'base64' || typeof body.content !== 'string') {
-    throw new Error(`GitHub 用户资料文件格式不支持：${path}`);
+    throw new Error(`GitHub 鐢ㄦ埛璧勬枡鏂囦欢鏍煎紡涓嶆敮鎸侊細${path}`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(fromBase64Utf8(body.content));
   } catch {
-    throw new Error(`GitHub 文件不是有效 JSON：${path}`);
+    throw new Error(`GitHub 鏂囦欢涓嶆槸鏈夋晥 JSON锛${path}`);
   }
 
   const normalized = normalizeUserProfilePayload(parsed);
   if (!normalized) {
-    throw new Error(`GitHub 用户资料格式无效：${path}`);
+    throw new Error(`GitHub 鐢ㄦ埛璧勬枡鏍煎紡鏃犳晥锛${path}`);
   }
 
   return {
@@ -1015,12 +1093,12 @@ export async function fetchUserAvatarDataUrlFromGithub(avatarPath: string, confi
 
   const normalizedPath = avatarPath.trim();
   if (!normalizedPath) {
-    throw new Error('头像路径不能为空。');
+    throw new Error('Avatar path cannot be empty.');
   }
 
   const body = await fetchGithubFileBody(config, token, normalizedPath);
   if (!body || body.encoding !== 'base64' || typeof body.content !== 'string') {
-    throw new Error(`GitHub 头像文件读取失败：${normalizedPath}`);
+    throw new Error(`GitHub 澶村儚鏂囦欢璇诲彇澶辫触锛${normalizedPath}`);
   }
 
   const lowerPath = normalizedPath.toLowerCase();
@@ -1052,20 +1130,20 @@ export async function appendFuelBalanceAdjustmentToGithub(
   } else if (!currentResponse.ok) {
     const body = (await currentResponse.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${currentResponse.status}`;
-    throw new Error(`GitHub 读取失败：${message}`);
+    throw new Error(`GitHub 璇诲彇澶辫触锛${message}`);
   } else {
     const body = (await currentResponse.json()) as GithubContentFileBody;
     sha = typeof body.sha === 'string' ? body.sha : undefined;
 
     if (body.encoding !== 'base64' || typeof body.content !== 'string') {
-      throw new Error(`GitHub 文件格式不支持：${path}`);
+      throw new Error(`GitHub 鏂囦欢鏍煎紡涓嶆敮鎸侊細${path}`);
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(fromBase64Utf8(body.content));
     } catch {
-      throw new Error(`GitHub 文件不是有效 JSON：${path}`);
+      throw new Error(`GitHub 鏂囦欢涓嶆槸鏈夋晥 JSON锛${path}`);
     }
 
     currentEntries = normalizeFuelBalanceAdjustmentPayload(parsed);
@@ -1094,7 +1172,7 @@ export async function appendFuelBalanceAdjustmentToGithub(
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${response.status}`;
-    throw new Error(`GitHub 提交失败：${message}`);
+    throw new Error(`GitHub 鎻愪氦澶辫触锛${message}`);
   }
 
   const data = (await response.json()) as { content?: { path?: string; sha?: string } };
@@ -1131,7 +1209,7 @@ export async function uploadReminderRingtoneToGithub(
   if (!uploadResponse.ok) {
     const body = (await uploadResponse.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${uploadResponse.status}`;
-    throw new Error(`GitHub 铃声上传失败：${message}`);
+    throw new Error(`GitHub 閾冨０涓婁紶澶辫触锛${message}`);
   }
 
   const uploadedAudio = (await uploadResponse.json()) as { content?: { path?: string; sha?: string } };
@@ -1139,7 +1217,7 @@ export async function uploadReminderRingtoneToGithub(
 
   const nowUnix = Math.floor(Date.now() / 1000);
   const configPayload: GithubReminderRingtonePathConfig = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     updatedAtUnix: nowUnix,
     sourceMode: normalizeReminderSourceMode(input.sourceMode),
     uploaded: {
@@ -1148,6 +1226,7 @@ export async function uploadReminderRingtoneToGithub(
       mimeType,
     },
     defaultFile: normalizeReminderDefaultFilePathItem(input.defaultFile),
+    synth: normalizeReminderSynthPatternItem(input.synth, nowUnix),
   };
 
   const configPath = getReminderAudioPathConfigPath(config);
@@ -1166,7 +1245,7 @@ export async function uploadReminderRingtoneToGithub(
   if (!configResponse.ok) {
     const body = (await configResponse.json().catch(() => ({}))) as GithubErrorBody;
     const message = body.message ?? `HTTP ${configResponse.status}`;
-    throw new Error(`GitHub 铃声路径配置写入失败：${message}`);
+    throw new Error(`GitHub 閾冨０璺緞閰嶇疆鍐欏叆澶辫触锛${message}`);
   }
 
   const uploadedConfig = (await configResponse.json()) as { content?: { path?: string; sha?: string } };
@@ -1176,6 +1255,53 @@ export async function uploadReminderRingtoneToGithub(
     audioSha: uploadedAudio.content?.sha,
     configPath: uploadedConfig.content?.path ?? configPath,
     configSha: uploadedConfig.content?.sha,
+  };
+}
+
+export async function syncReminderRingtonePathConfigToGithub(
+  input: SyncReminderRingtonePathConfigToGithubInput,
+  config: AppConfig,
+  token: string,
+): Promise<SyncReminderRingtonePathConfigToGithubResult> {
+  validateGithubConfig(config, token);
+
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const configPayload: GithubReminderRingtonePathConfig = {
+    schemaVersion: 2,
+    updatedAtUnix: nowUnix,
+    sourceMode: normalizeReminderSourceMode(input.sourceMode),
+    uploaded: normalizeReminderPathItem(input.uploaded) ?? undefined,
+    defaultFile: normalizeReminderDefaultFilePathItem(input.defaultFile),
+    synth: normalizeReminderSynthPatternItem(input.synth, nowUnix),
+  };
+
+  if (!configPayload.uploaded && !configPayload.defaultFile && !configPayload.synth) {
+    throw new Error('No ringtone config to sync.');
+  }
+
+  const configPath = getReminderAudioPathConfigPath(config);
+  const currentConfigBody = await fetchGithubFileBody(config, token, configPath, { allowNotFound: true });
+  const configPutPayload = makePutPayload(
+    {
+      message: `chore(reminder): update ringtone path config ${nowUnix}`,
+      content: toBase64Utf8(JSON.stringify(configPayload, null, 2)),
+      sha: currentConfigBody?.sha,
+    },
+    config,
+  );
+
+  const configResponse = await fetchGithubContentsPut(config, token, configPath, configPutPayload);
+  if (!configResponse.ok) {
+    const body = (await configResponse.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${configResponse.status}`;
+    throw new Error(`GitHub ringtone path config write failed: ${message}`);
+  }
+
+  const uploadedConfig = (await configResponse.json()) as { content?: { path?: string; sha?: string } };
+  return {
+    configPath: uploadedConfig.content?.path ?? configPath,
+    configSha: uploadedConfig.content?.sha,
+    updatedAtUnix: nowUnix,
   };
 }
 
@@ -1192,19 +1318,19 @@ export async function fetchReminderRingtonePathConfigFromGithub(
   }
 
   if (body.encoding !== 'base64' || typeof body.content !== 'string') {
-    throw new Error(`GitHub 提醒铃声路径配置格式不支持：${configPath}`);
+    throw new Error(`GitHub 鎻愰啋閾冨０璺緞閰嶇疆鏍煎紡涓嶆敮鎸侊細${configPath}`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(fromBase64Utf8(body.content));
   } catch {
-    throw new Error(`GitHub 提醒铃声路径配置不是有效 JSON：${configPath}`);
+    throw new Error(`GitHub 鎻愰啋閾冨０璺緞閰嶇疆涓嶆槸鏈夋晥 JSON锛${configPath}`);
   }
 
   const normalized = normalizeReminderRingtonePathConfig(parsed);
   if (!normalized) {
-    throw new Error(`GitHub 提醒铃声路径配置内容无效：${configPath}`);
+    throw new Error(`GitHub 鎻愰啋閾冨０璺緞閰嶇疆鍐呭鏃犳晥锛${configPath}`);
   }
 
   return normalized;
@@ -1220,15 +1346,17 @@ export async function fetchReminderAudioDataUrlFromGithub(
 
   const normalizedPath = normalizeReminderAudioPath(audioPath);
   if (!normalizedPath) {
-    throw new Error('提醒铃声路径无效。');
+    throw new Error('Invalid reminder audio path.');
   }
 
   const body = await fetchGithubFileBody(config, token, normalizedPath);
   if (!body || body.encoding !== 'base64' || typeof body.content !== 'string') {
-    throw new Error(`GitHub 提醒铃声读取失败：${normalizedPath}`);
+    throw new Error(`GitHub 鎻愰啋閾冨０璇诲彇澶辫触锛${normalizedPath}`);
   }
 
   const mimeType = normalizeReminderAudioMimeType(mimeTypeHint) ?? inferAudioMimeTypeFromPath(normalizedPath);
   const base64 = body.content.replace(/[\r\n]/g, '');
   return `data:${mimeType};base64,${base64}`;
 }
+
+
