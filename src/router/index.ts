@@ -7,6 +7,7 @@ import GuideView from '../views/GuideView.vue';
 import ProfileView from '../views/ProfileView.vue';
 import SettingsView from '../views/SettingsView.vue';
 import ReminderView from '../views/ReminderView.vue';
+import PomodoroView from '../views/PomodoroView.vue';
 
 const router = createRouter({
   history: createWebHashHistory(import.meta.env.BASE_URL),
@@ -50,6 +51,11 @@ const router = createRouter({
       path: '/reminder',
       name: 'reminder',
       component: ReminderView,
+    },
+    {
+      path: '/pomodoro',
+      name: 'pomodoro',
+      component: PomodoroView,
     },
   ],
 });

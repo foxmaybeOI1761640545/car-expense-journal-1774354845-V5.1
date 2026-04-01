@@ -947,6 +947,17 @@ select:focus {
   align-content: start;
 }
 
+.reminder-channel-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.reminder-channel-card__collapse-btn {
+  margin-left: auto;
+}
+
 .reminder-list-card {
   grid-column: span 12;
   display: grid;
@@ -1013,6 +1024,92 @@ select:focus {
   flex-wrap: wrap;
 }
 
+.pomodoro-layout {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.pomodoro-timer-card {
+  grid-column: span 7;
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+
+.pomodoro-timer-card--work {
+  background: linear-gradient(160deg, #fff7ee 0%, #fffdf9 100%);
+}
+
+.pomodoro-timer-card--short-break {
+  background: linear-gradient(160deg, #f4fff8 0%, #f8fff9 100%);
+}
+
+.pomodoro-timer-card--long-break {
+  background: linear-gradient(160deg, #f4fbff 0%, #f9fcff 100%);
+}
+
+.pomodoro-settings-card {
+  grid-column: span 5;
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.pomodoro-ring-wrap {
+  width: min(100%, 320px);
+  margin: 0 auto;
+  aspect-ratio: 1 / 1;
+  position: relative;
+}
+
+.pomodoro-ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.pomodoro-ring__track {
+  fill: none;
+  stroke: #ecdcc5;
+  stroke-width: 12;
+}
+
+.pomodoro-ring__progress {
+  fill: none;
+  stroke-width: 12;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.35s linear, stroke 0.2s ease;
+}
+
+.pomodoro-ring__progress--work {
+  stroke: #b65c5c;
+}
+
+.pomodoro-ring__progress--short-break {
+  stroke: #5a9b72;
+}
+
+.pomodoro-ring__progress--long-break {
+  stroke: #5f86b6;
+}
+
+.pomodoro-ring__content {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.pomodoro-time {
+  font-size: clamp(34px, 9vw, 56px);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+}
+
 .app-toast {
   position: fixed;
   left: 50%;
@@ -1061,6 +1158,10 @@ select:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .pomodoro-layout {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .overview-card,
   .summary-card,
   .totals-card,
@@ -1068,13 +1169,19 @@ select:focus {
   .settings-card,
   .reminder-form-card,
   .reminder-channel-card,
-  .reminder-list-card {
+  .reminder-list-card,
+  .pomodoro-timer-card,
+  .pomodoro-settings-card {
     grid-column: span 1;
   }
 
   .overview-card,
   .settings-card,
   .reminder-list-card {
+    grid-column: span 2;
+  }
+
+  .pomodoro-timer-card {
     grid-column: span 2;
   }
 
@@ -1167,6 +1274,10 @@ select:focus {
     grid-template-columns: 1fr;
   }
 
+  .pomodoro-layout {
+    grid-template-columns: 1fr;
+  }
+
   .overview-card,
   .summary-card,
   .totals-card,
@@ -1174,8 +1285,14 @@ select:focus {
   .settings-card,
   .reminder-form-card,
   .reminder-channel-card,
-  .reminder-list-card {
+  .reminder-list-card,
+  .pomodoro-timer-card,
+  .pomodoro-settings-card {
     grid-column: span 1;
+  }
+
+  .pomodoro-ring-wrap {
+    width: min(100%, 280px);
   }
 
   .metric-grid,

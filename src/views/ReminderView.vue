@@ -1,6 +1,6 @@
 <template>
   <main class="page page--reminder">
-    <PageHeader title="提醒中心" description="支持停车提醒、番茄钟与自定义倒计时；页面保持打开时可在线提醒。" />
+    <PageHeader title="提醒中心" description="支持停车提醒与自定义倒计时；番茄钟请前往独立页面。页面保持打开时可在线提醒。" />
 
     <section class="reminder-grid">
       <article class="card reminder-form-card">
@@ -9,9 +9,8 @@
           <label>
             提醒类型
             <select v-model="formKind">
-              <option value="parking">停车提醒</option>
-              <option value="pomodoro">番茄钟</option>
               <option value="custom">自定义</option>
+              <option value="parking">停车提醒</option>
             </select>
           </label>
           <label>
@@ -41,14 +40,27 @@
           </label>
           <div class="inline-actions full-width">
             <button class="btn btn--primary" type="submit">创建提醒</button>
-            <button class="btn btn--ghost" type="button" @click="applyTemplateDuration('parking')">停车 120:00</button>
-            <button class="btn btn--ghost" type="button" @click="applyTemplateDuration('pomodoro')">番茄钟 25:00</button>
+            <button class="btn btn--ghost" type="button" @click="applyTemplateDuration('parking')">停车 180:00</button>
+            <RouterLink class="btn btn--ghost" to="/pomodoro">番茄钟页面</RouterLink>
           </div>
         </form>
       </article>
 
       <article class="card reminder-channel-card">
-        <h2>提醒通道状态</h2>
+        <div class="reminder-channel-card__header">
+          <h2>提醒通道状态</h2>
+          <button
+            v-if="isMobileLayout"
+            class="btn btn--ghost reminder-channel-card__collapse-btn"
+            type="button"
+            :aria-expanded="!isChannelCardCollapsed"
+            @click="toggleChannelCardCollapsed"
+          >
+            {{ isChannelCardCollapsed ? '展开' : '收起' }}
+          </button>
+        </div>
+        <p v-if="isMobileLayout && isChannelCardCollapsed" class="hint">{{ channelStatusSummaryText }}</p>
+        <template v-if="!isMobileLayout || !isChannelCardCollapsed">
         <p class="muted">支持四种铃声策略：自动、仅上传音频、仅默认文件、仅 Web Audio 合成。</p>
         <div class="form-grid reminder-synth-grid">
           <label class="full-width">
@@ -140,6 +152,7 @@
         <p v-if="backendPingResult" class="hint">
           服务：{{ backendPingResult.service }} · 版本：{{ backendPingResult.version }} · 运行 {{ backendPingResult.uptimeSeconds }} 秒
         </p>
+        </template>
       </article>
 
       <article class="card reminder-list-card">
@@ -308,13 +321,15 @@ interface ActiveRingtoneTarget {
   fallbackReason?: string;
 }
 
+const MOBILE_BREAKPOINT = 767;
+
 const store = useAppStore();
 const tasks = ref<ReminderTask[]>([]);
 const nowUnix = ref(nowUnixSeconds());
-const formKind = ref<ReminderKind>('parking');
+const formKind = ref<ReminderKind>('custom');
 const formTitle = ref('');
 const formNote = ref('');
-const formDurationMinutes = ref(120);
+const formDurationMinutes = ref(0);
 const formDurationSeconds = ref(0);
 const formSoundEnabled = ref(true);
 const formNotificationEnabled = ref(true);
@@ -340,6 +355,8 @@ const backendStatus = ref<'unconfigured' | 'checking' | 'online' | 'offline'>('u
 const backendStatusMessage = ref('');
 const backendPingResult = ref<ReminderBackendPingResult | null>(null);
 const alarmLoopRunning = ref(false);
+const isMobileLayout = ref(false);
+const isChannelCardCollapsed = ref(false);
 
 const reminderApiBaseUrl = computed(() => store.state.config.reminderApiBaseUrl.trim());
 const effectiveReminderApiBaseUrl = computed(() => resolveReminderBackendBaseUrl(store.state.config));
@@ -464,6 +481,18 @@ const backendStatusTagClass = computed(() => {
   }
   return 'tag--neutral';
 });
+const channelStatusSummaryText = computed(() => {
+  const notificationSummary =
+    notificationPermission.value === 'granted'
+      ? '通知已授权'
+      : notificationPermission.value === 'denied'
+        ? '通知被拒绝'
+        : notificationPermission.value === 'unsupported'
+          ? '通知不支持'
+          : '通知未授权';
+  const soundSummary = soundPrimed.value ? '声音已启用' : '声音未启用';
+  return `${notificationSummary} · ${soundSummary} · ${backendStatusText.value}`;
+});
 
 let ticker: number | null = null;
 let audioContext: AudioContext | null = null;
@@ -492,7 +521,7 @@ watch(
 
 watch(formKind, (value) => {
   if (value === 'parking') {
-    formDurationMinutes.value = 120;
+    formDurationMinutes.value = 180;
     formDurationSeconds.value = 0;
     if (!formTitle.value.trim()) {
       formTitle.value = '停车提醒';
@@ -500,16 +529,7 @@ watch(formKind, (value) => {
     return;
   }
 
-  if (value === 'pomodoro') {
-    formDurationMinutes.value = 25;
-    formDurationSeconds.value = 0;
-    if (!formTitle.value.trim()) {
-      formTitle.value = '番茄钟提醒';
-    }
-    return;
-  }
-
-  formDurationMinutes.value = 10;
+  formDurationMinutes.value = 0;
   formDurationSeconds.value = 0;
   if (!formTitle.value.trim()) {
     formTitle.value = '自定义提醒';
@@ -525,6 +545,7 @@ watch(
 );
 
 onMounted(() => {
+  syncMobileLayoutState();
   syncSynthInputsFromConfig(synthPatternConfig.value);
   tasks.value = loadReminderTasks();
   triggerDueReminders();
@@ -537,6 +558,7 @@ onMounted(() => {
   }, 1000);
 
   document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('resize', handleViewportResize);
 });
 
 onBeforeUnmount(() => {
@@ -547,6 +569,7 @@ onBeforeUnmount(() => {
 
   stopLoopingSound();
   document.removeEventListener('visibilitychange', handleVisibilityChange);
+  window.removeEventListener('resize', handleViewportResize);
 });
 
 function persistTasks(nextTasks: ReminderTask[]): void {
@@ -562,6 +585,28 @@ function handleVisibilityChange(): void {
   nowUnix.value = nowUnixSeconds();
   notificationPermission.value = getNotificationPermission();
   triggerDueReminders();
+}
+
+function syncMobileLayoutState(): void {
+  const nextIsMobile = window.innerWidth <= MOBILE_BREAKPOINT;
+  if (nextIsMobile === isMobileLayout.value) {
+    return;
+  }
+
+  isMobileLayout.value = nextIsMobile;
+  isChannelCardCollapsed.value = nextIsMobile;
+}
+
+function handleViewportResize(): void {
+  syncMobileLayoutState();
+}
+
+function toggleChannelCardCollapsed(): void {
+  if (!isMobileLayout.value) {
+    return;
+  }
+
+  isChannelCardCollapsed.value = !isChannelCardCollapsed.value;
 }
 
 function applyTemplateDuration(kind: ReminderKind): void {
