@@ -209,7 +209,7 @@ const minuteProgressRatio = computed(() => {
   }
   return Math.max(0, Math.min(1, secondsInMinute / 60));
 });
-const minuteRingDashOffset = computed(() => Number((MINUTE_RING_CIRCUMFERENCE * (1 - minuteProgressRatio.value)).toFixed(3)));
+const minuteRingDashOffset = computed(() => Number((-MINUTE_RING_CIRCUMFERENCE * (1 - minuteProgressRatio.value)).toFixed(3)));
 
 const notificationPermissionText = computed(() => {
   if (notificationPermission.value === 'unsupported') {
