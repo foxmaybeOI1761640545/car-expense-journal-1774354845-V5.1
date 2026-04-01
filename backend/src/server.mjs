@@ -7,7 +7,13 @@ const REQUESTED_PORT = Number(process.env.PORT) || DEFAULT_PORT;
 const EXPLICIT_PORT = typeof process.env.PORT === 'string' && process.env.PORT.trim().length > 0;
 const ENABLE_PORT_FALLBACK = parseBooleanEnv(process.env.ENABLE_PORT_FALLBACK, !EXPLICIT_PORT);
 const MAX_PORT_FALLBACK_STEPS = clampInteger(process.env.MAX_PORT_FALLBACK_STEPS, 20, 0, 200);
-const DEFAULT_LOCAL_CORS_ORIGINS = ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:4173', 'http://127.0.0.1:4173'];
+const DEFAULT_CORS_ORIGIN_RULES = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
+  'https://*.github.io',
+];
 const CORS_ORIGINS = resolveCorsOrigins(process.env.CORS_ORIGINS || '');
 const startedAt = Date.now();
 let listeningPort = REQUESTED_PORT;
@@ -25,7 +31,42 @@ function resolveCorsOrigins(raw) {
     return parsed;
   }
 
-  return [...DEFAULT_LOCAL_CORS_ORIGINS];
+  return [...DEFAULT_CORS_ORIGIN_RULES];
+}
+
+function isWildcardCorsRule(rule) {
+  return /^https?:\/\/\*\.[^/]+$/i.test(rule);
+}
+
+function originMatchesCorsRule(origin, rule) {
+  if (rule === origin) {
+    return true;
+  }
+
+  if (!isWildcardCorsRule(rule)) {
+    return false;
+  }
+
+  const wildcardMatch = rule.match(/^(https?):\/\/\*\.([^/]+)$/i);
+  if (!wildcardMatch) {
+    return false;
+  }
+
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const expectedProtocol = `${wildcardMatch[1].toLowerCase()}:`;
+  if (parsedOrigin.protocol.toLowerCase() !== expectedProtocol) {
+    return false;
+  }
+
+  const host = parsedOrigin.hostname.toLowerCase();
+  const wildcardSuffix = wildcardMatch[2].toLowerCase();
+  return host === wildcardSuffix || host.endsWith(`.${wildcardSuffix}`);
 }
 
 function parseBooleanEnv(raw, fallback) {
@@ -65,7 +106,7 @@ function resolveCorsOrigin(origin) {
     return null;
   }
 
-  if (CORS_ORIGINS.includes(origin)) {
+  if (CORS_ORIGINS.some((rule) => originMatchesCorsRule(origin, rule))) {
     return origin;
   }
 
@@ -83,7 +124,7 @@ function writeJson(res, statusCode, body, origin) {
   const resolvedCorsOrigin = resolveCorsOrigin(origin);
   if (resolvedCorsOrigin) {
     headers['Access-Control-Allow-Origin'] = resolvedCorsOrigin;
-    headers['Access-Control-Allow-Methods'] = 'GET,POST,PATCH,OPTIONS';
+    headers['Access-Control-Allow-Methods'] = 'GET,HEAD,POST,PATCH,OPTIONS';
     headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
     headers['Vary'] = 'Origin';
   }
@@ -92,19 +133,19 @@ function writeJson(res, statusCode, body, origin) {
   res.end(payload);
 }
 
-function writeNoContent(res, origin) {
+function writeNoContent(res, origin, statusCode = 204) {
   const headers = {
     'Cache-Control': 'no-store',
   };
   const resolvedCorsOrigin = resolveCorsOrigin(origin);
   if (resolvedCorsOrigin) {
     headers['Access-Control-Allow-Origin'] = resolvedCorsOrigin;
-    headers['Access-Control-Allow-Methods'] = 'GET,POST,PATCH,OPTIONS';
+    headers['Access-Control-Allow-Methods'] = 'GET,HEAD,POST,PATCH,OPTIONS';
     headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
     headers['Vary'] = 'Origin';
   }
 
-  res.writeHead(204, headers);
+  res.writeHead(statusCode, headers);
   res.end();
 }
 
@@ -145,8 +186,13 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/healthz') {
-    if (req.method !== 'GET') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
       writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+      return;
+    }
+
+    if (req.method === 'HEAD') {
+      writeNoContent(res, origin, 200);
       return;
     }
 
@@ -163,8 +209,13 @@ const server = http.createServer((req, res) => {
   }
 
   if (pathname === '/api/ping') {
-    if (req.method !== 'GET') {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
       writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+      return;
+    }
+
+    if (req.method === 'HEAD') {
+      writeNoContent(res, origin, 200);
       return;
     }
 

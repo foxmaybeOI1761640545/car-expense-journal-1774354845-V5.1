@@ -6,8 +6,8 @@
 
 这个后端提供提醒模块的基础在线能力：
 
-- 健康检查：`GET /healthz`
-- 前端连通性检测：`GET /api/ping`
+- 健康检查：`GET/HEAD /healthz`
+- 前端连通性检测：`GET/HEAD /api/ping`
 - CORS 控制（允许前端站点跨域访问）
 
 当前不依赖数据库，状态为无状态服务。
@@ -40,17 +40,19 @@ npm run start
 ### `CORS_ORIGINS`
 
 - 含义：允许跨域的来源（逗号分隔）
+- 支持精确来源（如 `https://your-frontend.example.com`）和通配规则（如 `https://*.github.io`）
 - 示例：
 
 ```bash
 CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
 ```
 
-- 未设置时，默认允许本地开发来源：
+- 未设置时，默认允许以下来源：
   - `http://localhost:5173`
   - `http://127.0.0.1:5173`
   - `http://localhost:4173`
   - `http://127.0.0.1:4173`
+  - `https://*.github.io`（覆盖 GitHub Pages）
 
 ### `APP_VERSION`（可选）
 
@@ -67,7 +69,7 @@ CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
 
 ## 4. API 说明
 
-### `GET /api/ping`
+### `GET/HEAD /api/ping`
 
 响应示例：
 
@@ -81,7 +83,11 @@ CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
 }
 ```
 
-### `GET /healthz`
+说明：
+- `GET`：返回 JSON。
+- `HEAD`：返回 `200` 且不返回响应体（用于监控探测）。
+
+### `GET/HEAD /healthz`
 
 在 `api/ping` 基础上增加：
 
@@ -90,6 +96,10 @@ CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
   "health": "ok"
 }
 ```
+
+说明：
+- `GET`：返回 JSON（含 `health: "ok"`）。
+- `HEAD`：返回 `200` 且不返回响应体（用于监控探测）。
 
 ## 5. Render 部署（后端单仓库）
 
@@ -113,6 +123,8 @@ CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
 3. 监控间隔：`5 min`
 4. 告警按需开启（邮件/Telegram 等）
 
+免费版提示：UptimeRobot 默认使用 `HEAD` 探测，当前后端已兼容 `HEAD /healthz`，无需升级套餐即可正常判定 `Up`。
+
 说明：UptimeRobot 只能帮助监控与定期触发，不等于 SLA 保障。
 
 ## 7. 常见问题
@@ -131,4 +143,4 @@ CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
 ### Render 可访问但前端请求失败
 
 - 确认前端调用地址是 `https://...`（不要混用 http）
-- 确认 Render 环境变量 `CORS_ORIGINS` 已配置你的前端线上域名
+- 若报 CORS 错误，确认 Render 环境变量 `CORS_ORIGINS` 已配置你的前端线上域名（例如 `https://foxmaybeoi1761640545.github.io`）

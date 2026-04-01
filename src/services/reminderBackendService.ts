@@ -103,7 +103,10 @@ export async function pingReminderBackend(baseUrl: string, timeoutMs = 6000): Pr
     }
 
     if (error instanceof TypeError) {
-      throw new Error(`连接失败：${normalizedBaseUrl}/api/ping。请确认端口与后端实际监听端口一致。`);
+      const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '当前前端域名';
+      throw new Error(
+        `连接失败：${normalizedBaseUrl}/api/ping。可能是跨域限制（CORS）或地址不可达。请在后端配置 CORS_ORIGINS 包含 ${currentOrigin}。`,
+      );
     }
 
     if (error instanceof Error) {
