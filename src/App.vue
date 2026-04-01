@@ -19,6 +19,26 @@
       </RouterLink>
     </header>
     <RouterView />
+    <transition name="global-reminder-popup-fade">
+      <section
+        v-if="showGlobalReminderPopup && currentGlobalReminderTask"
+        class="global-reminder-popup"
+        role="alertdialog"
+        aria-live="assertive"
+        aria-label="到点提醒"
+      >
+        <p class="eyebrow">到点提醒</p>
+        <h3>{{ currentGlobalReminderTask.title }}</h3>
+        <p class="hint">到点时间：{{ currentGlobalReminderTriggerText }}</p>
+        <p v-if="currentGlobalReminderTask.note" class="muted">{{ currentGlobalReminderTask.note }}</p>
+        <p v-if="globalPendingReminderTasks.length > 1" class="hint">还有 {{ globalPendingReminderTasks.length - 1 }} 条待确认提醒。</p>
+        <div class="inline-actions">
+          <button class="btn btn--primary" type="button" @click="acknowledgeCurrentGlobalReminder">收到</button>
+          <button class="btn btn--ghost" type="button" @click="acknowledgeAllGlobalReminders">全部收到</button>
+          <RouterLink class="btn btn--ghost" to="/reminder">去提醒中心</RouterLink>
+        </div>
+      </section>
+    </transition>
     <AppToast
       :visible="toast.visible"
       :message="toast.message"
@@ -29,11 +49,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import AppToast from './components/AppToast.vue';
-import { startGlobalReminderRuntime, stopGlobalReminderRuntime } from './services/reminderGlobalRuntimeService';
+import {
+  acknowledgeAllGlobalReminderTasks,
+  acknowledgeGlobalReminderTask,
+  startGlobalReminderRuntime,
+  stopGlobalReminderRuntime,
+  subscribeGlobalAcknowledgementPendingTasks,
+} from './services/reminderGlobalRuntimeService';
 import { useAppStore } from './stores/appStore';
+import type { ReminderTask } from './types/reminder';
+import { toLocalDateTime, unixSecondsToIsoString } from './utils/date';
 
 const store = useAppStore();
 const route = useRoute();
@@ -48,6 +76,16 @@ const userAvatarDataUrl = computed(() => store.state.userProfile.avatarDataUrl.t
 const avatarShapeClass = computed(() =>
   store.state.userProfile.avatarStyle === 'square' ? 'global-identity-avatar--square' : 'global-identity-avatar--round',
 );
+const globalPendingReminderTasks = ref<ReminderTask[]>([]);
+const currentGlobalReminderTask = computed(() => globalPendingReminderTasks.value[0] ?? null);
+const showGlobalReminderPopup = computed(() => route.name !== 'reminder' && currentGlobalReminderTask.value !== null);
+const currentGlobalReminderTriggerText = computed(() => {
+  if (!currentGlobalReminderTask.value) {
+    return '';
+  }
+  return toLocalDateTime(unixSecondsToIsoString(currentGlobalReminderTask.value.triggerAtUnix));
+});
+let unsubscribeGlobalReminderPending: (() => void) | null = null;
 
 watch(
   () => route.name,
@@ -61,7 +99,36 @@ watch(
   { immediate: true },
 );
 
+onMounted(() => {
+  unsubscribeGlobalReminderPending = subscribeGlobalAcknowledgementPendingTasks((tasks) => {
+    globalPendingReminderTasks.value = tasks;
+  });
+});
+
+function acknowledgeCurrentGlobalReminder(): void {
+  const task = currentGlobalReminderTask.value;
+  if (!task) {
+    return;
+  }
+
+  const changed = acknowledgeGlobalReminderTask(task.id);
+  if (changed) {
+    store.showToast('已确认提醒。', 'success');
+  }
+}
+
+function acknowledgeAllGlobalReminders(): void {
+  const changedCount = acknowledgeAllGlobalReminderTasks();
+  if (changedCount > 0) {
+    store.showToast(`已确认 ${changedCount} 条提醒。`, 'success');
+  }
+}
+
 onBeforeUnmount(() => {
+  if (unsubscribeGlobalReminderPending) {
+    unsubscribeGlobalReminderPending();
+    unsubscribeGlobalReminderPending = null;
+  }
   stopGlobalReminderRuntime();
 });
 </script>

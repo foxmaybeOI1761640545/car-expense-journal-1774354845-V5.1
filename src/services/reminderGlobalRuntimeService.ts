@@ -3,12 +3,15 @@ import type { ReminderSynthPatternConfig, ReminderTask } from '../types/reminder
 import { nowUnixSeconds } from '../utils/date';
 import { loadReminderDefaultAudioAsset, type ReminderResolvedDefaultAudioAsset } from './reminderAudioAssetService';
 import {
+  acknowledgeReminderTask,
+  createReminderTask,
   loadReminderRingtoneConfig,
   loadReminderRingtoneSourceMode,
   loadReminderSynthPatternConfig,
   loadReminderTasks,
   markReminderFired,
   saveReminderTasks,
+  upsertReminderTask,
 } from './reminderService';
 
 type RuntimeTargetKind = 'uploaded' | 'default-file' | 'synth';
@@ -41,9 +44,114 @@ let ringtoneFallbackHintShown = false;
 
 let gestureUnlockBound = false;
 let gestureUnlockHandler: (() => void) | null = null;
+const pendingAcknowledgementListeners = new Set<(tasks: ReminderTask[]) => void>();
 
 function getStore() {
   return useAppStore();
+}
+
+function normalizeRepeatWeekdays(input: number[] | undefined): number[] {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  const normalized = input
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item))
+    .map((item) => Math.floor(item))
+    .filter((item) => item >= 1 && item <= 7);
+
+  return Array.from(new Set<number>(normalized)).sort((a, b) => a - b);
+}
+
+function weekdayFromDate(date: Date): number {
+  const weekday = date.getDay();
+  return weekday === 0 ? 7 : weekday;
+}
+
+function resolveNextRepeatTriggerAtUnix(baseTriggerAtUnix: number, repeatWeekdays: number[], referenceUnix: number): number {
+  const normalizedRepeatWeekdays = normalizeRepeatWeekdays(repeatWeekdays);
+  if (!normalizedRepeatWeekdays.length) {
+    return baseTriggerAtUnix;
+  }
+
+  const baseDate = new Date(baseTriggerAtUnix * 1000);
+  if (Number.isNaN(baseDate.getTime())) {
+    throw new Error('Invalid base trigger time.');
+  }
+
+  const hour = baseDate.getHours();
+  const minute = baseDate.getMinutes();
+  const second = baseDate.getSeconds();
+  const searchFrom = new Date((referenceUnix + 1) * 1000);
+
+  for (let offset = 0; offset <= 21; offset += 1) {
+    const candidate = new Date(searchFrom);
+    candidate.setDate(searchFrom.getDate() + offset);
+    candidate.setHours(hour, minute, second, 0);
+
+    const weekday = weekdayFromDate(candidate);
+    if (!normalizedRepeatWeekdays.includes(weekday)) {
+      continue;
+    }
+
+    const candidateUnix = Math.floor(candidate.getTime() / 1000);
+    if (candidateUnix > referenceUnix) {
+      return candidateUnix;
+    }
+  }
+
+  throw new Error('Unable to compute next repeat trigger time.');
+}
+
+function buildNextRepeatTaskIfNeeded(task: ReminderTask, referenceUnix: number): ReminderTask | null {
+  if (task.scheduleMode !== 'date-time' || task.kind !== 'custom-time') {
+    return null;
+  }
+
+  const repeatWeekdays = normalizeRepeatWeekdays(task.repeatWeekdays);
+  if (!repeatWeekdays.length) {
+    return null;
+  }
+
+  try {
+    const nextTriggerAtUnix = resolveNextRepeatTriggerAtUnix(task.triggerAtUnix, repeatWeekdays, referenceUnix);
+    return createReminderTask({
+      kind: 'custom-time',
+      title: task.title,
+      note: task.note,
+      durationSeconds: Math.max(0, nextTriggerAtUnix - referenceUnix),
+      scheduleMode: 'date-time',
+      triggerAtUnix: nextTriggerAtUnix,
+      repeatWeekdays,
+      soundEnabled: task.soundEnabled,
+      notificationEnabled: task.notificationEnabled,
+      nowUnix: referenceUnix,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function getAcknowledgementPendingTasks(tasks: ReminderTask[]): ReminderTask[] {
+  return tasks
+    .filter((task) => task.status === 'fired' && task.requiresAcknowledgement && !Number.isFinite(task.acknowledgedAtUnix))
+    .sort((a, b) => {
+      const aKey = a.firedAtUnix ?? a.updatedAtUnix;
+      const bKey = b.firedAtUnix ?? b.updatedAtUnix;
+      return bKey - aKey;
+    });
+}
+
+function notifyAcknowledgementPendingListeners(tasks: ReminderTask[]): void {
+  const pendingTasks = getAcknowledgementPendingTasks(tasks);
+  pendingAcknowledgementListeners.forEach((listener) => {
+    try {
+      listener(pendingTasks);
+    } catch {
+      // Ignore subscriber errors to keep runtime stable.
+    }
+  });
 }
 
 function resolveAudioContextCtor(): typeof AudioContext | null {
@@ -358,7 +466,7 @@ function sendBrowserNotification(task: ReminderTask): void {
 
   try {
     new Notification(task.title, {
-      body: `Trigger time: ${new Date(task.triggerAtUnix * 1000).toLocaleString()}`,
+      body: `到点时间：${new Date(task.triggerAtUnix * 1000).toLocaleString()}`,
       tag: task.id,
     });
   } catch {
@@ -367,7 +475,7 @@ function sendBrowserNotification(task: ReminderTask): void {
 }
 
 function emitReminderAlert(task: ReminderTask): void {
-  getStore().showToast(`${task.title} is due. Please acknowledge it in Reminder Center.`, 'info');
+  getStore().showToast(`${task.title} 已到点，可直接在弹窗点击“收到”。`, 'info');
   if (task.notificationEnabled) {
     sendBrowserNotification(task);
   }
@@ -384,6 +492,7 @@ async function tickRuntime(): Promise<void> {
 
     const now = nowUnixSeconds();
     const dueTasks: ReminderTask[] = [];
+    const nextRepeatTasks: ReminderTask[] = [];
     const currentTasks = loadReminderTasks();
     const nextTasks = currentTasks.map((task) => {
       if (task.status !== 'pending') {
@@ -397,6 +506,11 @@ async function tickRuntime(): Promise<void> {
       }
 
       inFlightDueIds.add(task.id);
+      const nextRepeatTask = buildNextRepeatTaskIfNeeded(task, now);
+      if (nextRepeatTask) {
+        nextRepeatTasks.push(nextRepeatTask);
+      }
+
       const firedTask = markReminderFired(task, now);
       dueTasks.push(firedTask);
       return firedTask;
@@ -404,8 +518,9 @@ async function tickRuntime(): Promise<void> {
 
     let effectiveTasks = currentTasks;
     if (dueTasks.length > 0) {
-      saveReminderTasks(nextTasks);
-      effectiveTasks = nextTasks;
+      const withRepeatTasks = nextRepeatTasks.reduce((tasksAcc, repeatTask) => upsertReminderTask(tasksAcc, repeatTask), nextTasks);
+      saveReminderTasks(withRepeatTasks);
+      effectiveTasks = withRepeatTasks;
 
       dueTasks.forEach((task) => {
         try {
@@ -417,6 +532,7 @@ async function tickRuntime(): Promise<void> {
     }
 
     await syncLoopingSound(effectiveTasks);
+    notifyAcknowledgementPendingListeners(effectiveTasks);
   } finally {
     inFlightTick = false;
   }
@@ -428,6 +544,64 @@ function handleVisibilityChange(): void {
   }
 
   void tickRuntime();
+}
+
+export function subscribeGlobalAcknowledgementPendingTasks(listener: (tasks: ReminderTask[]) => void): () => void {
+  pendingAcknowledgementListeners.add(listener);
+  listener(getAcknowledgementPendingTasks(loadReminderTasks()));
+
+  return () => {
+    pendingAcknowledgementListeners.delete(listener);
+  };
+}
+
+export function acknowledgeGlobalReminderTask(taskId: string): boolean {
+  const now = nowUnixSeconds();
+  let changed = false;
+
+  const currentTasks = loadReminderTasks();
+  const nextTasks = currentTasks.map((task) => {
+    if (task.id !== taskId) {
+      return task;
+    }
+
+    const acknowledgedTask = acknowledgeReminderTask(task, now);
+    changed = changed || acknowledgedTask !== task;
+    return acknowledgedTask;
+  });
+
+  if (!changed) {
+    notifyAcknowledgementPendingListeners(currentTasks);
+    return false;
+  }
+
+  saveReminderTasks(nextTasks);
+  notifyAcknowledgementPendingListeners(nextTasks);
+  void syncLoopingSound(nextTasks);
+  return true;
+}
+
+export function acknowledgeAllGlobalReminderTasks(): number {
+  const now = nowUnixSeconds();
+  let changedCount = 0;
+  const currentTasks = loadReminderTasks();
+  const nextTasks = currentTasks.map((task) => {
+    const acknowledgedTask = acknowledgeReminderTask(task, now);
+    if (acknowledgedTask !== task) {
+      changedCount += 1;
+    }
+    return acknowledgedTask;
+  });
+
+  if (changedCount <= 0) {
+    notifyAcknowledgementPendingListeners(currentTasks);
+    return 0;
+  }
+
+  saveReminderTasks(nextTasks);
+  notifyAcknowledgementPendingListeners(nextTasks);
+  void syncLoopingSound(nextTasks);
+  return changedCount;
 }
 
 export function startGlobalReminderRuntime(): void {
@@ -444,6 +618,7 @@ export function startGlobalReminderRuntime(): void {
   ticker = window.setInterval(() => {
     void tickRuntime();
   }, 1000);
+  notifyAcknowledgementPendingListeners(loadReminderTasks());
   void tickRuntime();
 }
 
@@ -464,4 +639,5 @@ export function stopGlobalReminderRuntime(): void {
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   unbindGestureUnlock();
   stopLoopingSound();
+  notifyAcknowledgementPendingListeners([]);
 }

@@ -1175,6 +1175,10 @@ select:focus {
   background: linear-gradient(160deg, #f4fbff 0%, #f9fcff 100%);
 }
 
+.pomodoro-timer-card--sound-test {
+  background: linear-gradient(160deg, #fffdf0 0%, #fff9e2 100%);
+}
+
 .pomodoro-settings-card {
   grid-column: span 5;
   display: grid;
@@ -1220,6 +1224,24 @@ select:focus {
   stroke: #5f86b6;
 }
 
+.pomodoro-ring__progress--sound-test {
+  stroke: #b68c42;
+}
+
+.pomodoro-ring__minute-track {
+  fill: none;
+  stroke: rgba(214, 174, 92, 0.22);
+  stroke-width: 8;
+}
+
+.pomodoro-ring__minute-progress {
+  fill: none;
+  stroke: #d6ae5c;
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.25s linear;
+}
+
 .pomodoro-ring__content {
   position: absolute;
   inset: 0;
@@ -1234,6 +1256,37 @@ select:focus {
   line-height: 1;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
+}
+
+.global-reminder-popup {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  width: min(92vw, 420px);
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid #ddb6a7;
+  background: linear-gradient(160deg, #fff6f3 0%, #fffdf9 100%);
+  box-shadow: 0 10px 28px rgba(120, 88, 65, 0.2);
+  z-index: 55;
+}
+
+.global-reminder-popup h3 {
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.global-reminder-popup-fade-enter-active,
+.global-reminder-popup-fade-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.global-reminder-popup-fade-enter-from,
+.global-reminder-popup-fade-leave-to {
+  opacity: 0;
+  transform: translateY(8px);
 }
 
 .app-toast {
@@ -1394,6 +1447,13 @@ select:focus {
 
   .cross-page-link {
     width: 100%;
+  }
+
+  .global-reminder-popup {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
   }
 
   .dashboard-grid {
