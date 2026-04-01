@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 2,
+  "updatedAtUnix": 1775048758,
+  "sourceMode": "auto",
+  "defaultFile": {
+    "name": "默认提醒铃声",
+    "path": "assets/reminder-audio/default-ringtone.mp3",
+    "mimeType": "audio/mpeg"
+  },
+  "synth": {
+    "waveform": "sine",
+    "frequencies": [
+      1010,
+      350,
+      520,
+      450,
+      423,
+      1103,
+      1600
+    ],
+    "toneDurationMs": 100,
+    "gapDurationMs": 20,
+    "gain": 0.96,
+    "updatedAtUnix": 1775048753
+  }
+}
