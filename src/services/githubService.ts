@@ -3,6 +3,7 @@ import type { AvatarStyle } from '../types/profile';
 import type { ReminderRingtoneSourceMode, ReminderSynthPatternConfig } from '../types/reminder';
 import type { AppRecord, RecordTombstone, RecordType } from '../types/records';
 import type { FuelBalanceAdjustmentLog } from '../types/store';
+import { resolveReminderBackendBaseUrl } from './reminderBackendUrlService';
 
 interface GithubSubmitResult {
   path: string;
@@ -169,7 +170,7 @@ function normalizeRecordsDir(dir: string): string {
 }
 
 function normalizeBackendBaseUrl(config: AppConfig): string {
-  return config.reminderApiBaseUrl.trim().replace(/\/+$/, '');
+  return resolveReminderBackendBaseUrl(config);
 }
 
 function isSealedGithubToken(token: string): boolean {
@@ -197,7 +198,7 @@ function validateGithubConfig(config: AppConfig, token: string): void {
   }
 
   if (isSealedGithubToken(token) && !normalizeBackendBaseUrl(config)) {
-    throw new Error('Sealed token is used but reminderApiBaseUrl is empty.');
+    throw new Error('Sealed token is used but backend base URL is empty.');
   }
 }
 
@@ -256,7 +257,7 @@ async function fetchGithubContentsGet(
   if (isSealedGithubToken(token)) {
     const backendBaseUrl = normalizeBackendBaseUrl(config);
     if (!backendBaseUrl) {
-      throw new Error('Sealed token is used but reminderApiBaseUrl is empty.');
+      throw new Error('Sealed token is used but backend base URL is empty.');
     }
 
     return fetch(`${backendBaseUrl}/api/github/contents/${mode}`, {
@@ -292,7 +293,7 @@ async function fetchGithubContentsPut(
   if (isSealedGithubToken(token)) {
     const backendBaseUrl = normalizeBackendBaseUrl(config);
     if (!backendBaseUrl) {
-      throw new Error('Sealed token is used but reminderApiBaseUrl is empty.');
+      throw new Error('Sealed token is used but backend base URL is empty.');
     }
 
     return fetch(`${backendBaseUrl}/api/github/contents/put`, {

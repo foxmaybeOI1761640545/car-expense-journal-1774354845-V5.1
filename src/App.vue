@@ -29,11 +29,14 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, onBeforeUnmount, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import AppToast from './components/AppToast.vue';
+import { startGlobalReminderRuntime, stopGlobalReminderRuntime } from './services/reminderGlobalRuntimeService';
 import { useAppStore } from './stores/appStore';
 
 const store = useAppStore();
+const route = useRoute();
 const toast = computed(() => store.state.toast);
 const hasLocalDisplayName = computed(() => store.state.userProfile.displayName.trim().length > 0);
 const userDisplayName = computed(() => {
@@ -45,4 +48,20 @@ const userAvatarDataUrl = computed(() => store.state.userProfile.avatarDataUrl.t
 const avatarShapeClass = computed(() =>
   store.state.userProfile.avatarStyle === 'square' ? 'global-identity-avatar--square' : 'global-identity-avatar--round',
 );
+
+watch(
+  () => route.name,
+  (name) => {
+    if (name === 'reminder') {
+      stopGlobalReminderRuntime();
+      return;
+    }
+    startGlobalReminderRuntime();
+  },
+  { immediate: true },
+);
+
+onBeforeUnmount(() => {
+  stopGlobalReminderRuntime();
+});
 </script>

@@ -50,6 +50,9 @@ function sanitizePartialConfig(raw: Partial<AppConfig>): Partial<AppConfig> {
   if (typeof raw.reminderApiBaseUrl === 'string') {
     next.reminderApiBaseUrl = raw.reminderApiBaseUrl.trim();
   }
+  if (typeof raw.reminderApiFallbackBaseUrl === 'string') {
+    next.reminderApiFallbackBaseUrl = raw.reminderApiFallbackBaseUrl.trim();
+  }
   if (typeof raw.reminderDefaultEmail === 'string') {
     next.reminderDefaultEmail = raw.reminderDefaultEmail.trim();
   }

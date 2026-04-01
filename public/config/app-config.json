@@ -10,6 +10,7 @@
   "githubBranch": "records/live-data",
   "githubRecordsDir": "data/records",
   "reminderApiBaseUrl": "",
+  "reminderApiFallbackBaseUrl": "https://car-expense-journal-1774354845-v5-1-pk7d.onrender.com",
   "reminderDefaultEmail": "",
   "preferConfigOverLocalStorage": false
 }

@@ -13,6 +13,7 @@
   githubBranch: string;
   githubRecordsDir: string;
   reminderApiBaseUrl: string;
+  reminderApiFallbackBaseUrl: string;
   reminderDefaultEmail: string;
   preferConfigOverLocalStorage: boolean;
 }
@@ -29,6 +30,7 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   githubBranch: 'records/live-data',
   githubRecordsDir: 'data/records',
   reminderApiBaseUrl: '',
+  reminderApiFallbackBaseUrl: '',
   reminderDefaultEmail: '',
   preferConfigOverLocalStorage: false,
 };

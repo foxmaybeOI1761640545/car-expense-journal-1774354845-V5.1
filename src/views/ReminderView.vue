@@ -227,6 +227,7 @@ import {
   uploadReminderRingtoneToGithub,
 } from '../services/githubService';
 import { loadReminderDefaultAudioAsset, type ReminderResolvedDefaultAudioAsset } from '../services/reminderAudioAssetService';
+import { resolveReminderBackendBaseUrl } from '../services/reminderBackendUrlService';
 import { pingReminderBackend, type ReminderBackendPingResult } from '../services/reminderBackendService';
 import {
   acknowledgeReminderTask,
@@ -341,6 +342,7 @@ const backendPingResult = ref<ReminderBackendPingResult | null>(null);
 const alarmLoopRunning = ref(false);
 
 const reminderApiBaseUrl = computed(() => store.state.config.reminderApiBaseUrl.trim());
+const effectiveReminderApiBaseUrl = computed(() => resolveReminderBackendBaseUrl(store.state.config));
 const pendingTasks = computed(() => tasks.value.filter((task) => task.status === 'pending'));
 const acknowledgmentPendingTasks = computed(() =>
   tasks.value
@@ -473,12 +475,12 @@ let syntheticLoopTimer: number | null = null;
 const inFlightDueIds = new Set<string>();
 
 watch(
-  reminderApiBaseUrl,
+  effectiveReminderApiBaseUrl,
   () => {
     backendPingResult.value = null;
     backendStatusMessage.value = '';
 
-    if (!reminderApiBaseUrl.value) {
+    if (!effectiveReminderApiBaseUrl.value) {
       backendStatus.value = 'unconfigured';
       return;
     }
@@ -1586,7 +1588,8 @@ function triggerDueReminders(): void {
 }
 
 async function checkBackendConnectivity(): Promise<void> {
-  if (!reminderApiBaseUrl.value) {
+  const backendBaseUrl = effectiveReminderApiBaseUrl.value;
+  if (!backendBaseUrl) {
     backendStatus.value = 'unconfigured';
     backendStatusMessage.value = '未配置提醒后端地址。';
     backendPingResult.value = null;
@@ -1598,7 +1601,7 @@ async function checkBackendConnectivity(): Promise<void> {
   backendPingResult.value = null;
 
   try {
-    const result = await pingReminderBackend(reminderApiBaseUrl.value);
+    const result = await pingReminderBackend(backendBaseUrl);
     backendStatus.value = 'online';
     backendPingResult.value = result;
     backendStatusMessage.value = `后端时间：${toLocalDateTimeText(result.serverTimeUnix)}`;

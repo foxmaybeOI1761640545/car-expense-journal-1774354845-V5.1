@@ -20,6 +20,7 @@ import {
 } from '../services/githubService';
 import { sealGithubTokenWithBackend } from '../services/backendPatVaultService';
 import { clearGithubTokenFromVault, loadGithubTokenFromVault, saveGithubTokenToVault } from '../services/githubTokenVaultService';
+import { resolveReminderBackendBaseUrl } from '../services/reminderBackendUrlService';
 import {
   clearAppData,
   clearLocalConfig,
@@ -896,9 +897,9 @@ async function saveGithubToken(token: string): Promise<void> {
     return;
   }
 
-  const backendBaseUrl = state.config.reminderApiBaseUrl.trim();
+  const backendBaseUrl = resolveReminderBackendBaseUrl(state.config);
   if (!backendBaseUrl) {
-    throw new Error('请先配置提醒后端地址（reminderApiBaseUrl），再保存 GitHub Token。');
+    throw new Error('请先配置提醒后端地址（reminderApiBaseUrl）或配置文件默认后端地址（reminderApiFallbackBaseUrl），再保存 GitHub Token。');
   }
 
   const sealed = await sealGithubTokenWithBackend(backendBaseUrl, normalized);
