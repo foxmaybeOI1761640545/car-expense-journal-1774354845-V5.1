@@ -31,7 +31,10 @@
         </div>
         <div class="inline-actions">
           <button class="btn btn--ghost" type="button" @click="requestNotificationPermission">请求系统通知权限</button>
-          <RouterLink class="btn btn--ghost" to="/reminder">返回提醒中心</RouterLink>
+          <RouterLink class="cross-page-link cross-page-link--reminder" to="/reminder">
+            <span class="cross-page-link__eyebrow">提醒模块</span>
+            <strong>返回提醒中心</strong>
+          </RouterLink>
         </div>
 
         <p class="hint">通知权限：{{ notificationPermissionText }}</p>

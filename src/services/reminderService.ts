@@ -3,6 +3,7 @@ import type {
   ReminderKind,
   ReminderRingtoneConfig,
   ReminderRingtoneSourceMode,
+  ReminderScheduleMode,
   ReminderStatus,
   ReminderSynthPatternConfig,
   ReminderTask,
@@ -18,12 +19,18 @@ const REMINDER_KIND_SET: Record<ReminderKind, true> = {
   parking: true,
   pomodoro: true,
   custom: true,
+  'custom-time': true,
 };
 
 const REMINDER_STATUS_SET: Record<ReminderStatus, true> = {
   pending: true,
   fired: true,
   cancelled: true,
+};
+
+const REMINDER_SCHEDULE_MODE_SET: Record<ReminderScheduleMode, true> = {
+  countdown: true,
+  'date-time': true,
 };
 
 const REMINDER_RINGTONE_SOURCE_MODE_SET: Record<ReminderRingtoneSourceMode, true> = {
@@ -74,6 +81,27 @@ function normalizeReminderStatus(value: unknown): ReminderStatus {
   return 'pending';
 }
 
+function normalizeReminderScheduleMode(value: unknown, kind: ReminderKind): ReminderScheduleMode {
+  if (typeof value === 'string' && value in REMINDER_SCHEDULE_MODE_SET) {
+    return value as ReminderScheduleMode;
+  }
+  return kind === 'custom-time' ? 'date-time' : 'countdown';
+}
+
+function sanitizeRepeatWeekdays(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalized = value
+    .map((item) => Number(item))
+    .filter((item) => Number.isFinite(item))
+    .map((item) => Math.floor(item))
+    .filter((item) => item >= 1 && item <= 7);
+
+  return Array.from(new Set<number>(normalized)).sort((a, b) => a - b);
+}
+
 function normalizeReminderTitle(value: unknown, kind: ReminderKind): string {
   if (typeof value === 'string') {
     const trimmed = value.trim().slice(0, 80);
@@ -87,6 +115,12 @@ function normalizeReminderTitle(value: unknown, kind: ReminderKind): string {
   }
   if (kind === 'pomodoro') {
     return '番茄钟提醒';
+  }
+  if (kind === 'custom-time') {
+    return '自定义时间提醒';
+  }
+  if (kind === 'custom') {
+    return '自定义倒计时提醒';
   }
   return '自定义提醒';
 }
@@ -102,15 +136,15 @@ function normalizeOptionalText(value: unknown, maxLength: number): string | unde
 function clampDurationSeconds(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
-    return 1;
+    return 0;
   }
 
   const rounded = Math.floor(parsed);
-  if (rounded < 1) {
-    return 1;
+  if (rounded < 0) {
+    return 0;
   }
-  if (rounded > 86400 * 14) {
-    return 86400 * 14;
+  if (rounded > 86400 * 3660) {
+    return 86400 * 3660;
   }
   return rounded;
 }
@@ -222,8 +256,13 @@ function sanitizeReminderTask(raw: unknown): ReminderTask | null {
   const nowUnix = nowUnixSeconds();
   const kind = normalizeReminderKind(value.kind);
   const createdAtUnix = clampUnixSeconds(value.createdAtUnix, nowUnix);
-  const durationSeconds = clampDurationSeconds(value.durationSeconds);
-  const triggerAtUnix = clampUnixSeconds(value.triggerAtUnix, createdAtUnix + durationSeconds);
+  const scheduleMode = normalizeReminderScheduleMode(value.scheduleMode, kind);
+  const fallbackDurationSeconds = clampDurationSeconds(value.durationSeconds);
+  const fallbackTriggerAt = createdAtUnix + fallbackDurationSeconds;
+  const triggerAtUnix = Math.max(createdAtUnix, clampUnixSeconds(value.triggerAtUnix, fallbackTriggerAt));
+  const durationSeconds =
+    scheduleMode === 'date-time' ? Math.max(0, triggerAtUnix - createdAtUnix) : fallbackDurationSeconds;
+  const repeatWeekdays = sanitizeRepeatWeekdays(value.repeatWeekdays);
   const status = normalizeReminderStatus(value.status);
   const updatedAtUnix = clampUnixSeconds(value.updatedAtUnix, createdAtUnix);
   const firedAtUnix = value.firedAtUnix === undefined ? undefined : clampUnixSeconds(value.firedAtUnix, updatedAtUnix);
@@ -243,6 +282,8 @@ function sanitizeReminderTask(raw: unknown): ReminderTask | null {
     note: normalizeOptionalText(value.note, 500),
     durationSeconds,
     triggerAtUnix,
+    scheduleMode,
+    repeatWeekdays: repeatWeekdays.length ? repeatWeekdays : undefined,
     createdAtUnix,
     updatedAtUnix,
     status,
@@ -279,9 +320,18 @@ export function clearReminderTasksStorage(): void {
 
 export function createReminderTask(input: CreateReminderTaskInput): ReminderTask {
   const nowUnix = Number.isFinite(input.nowUnix) ? Math.floor(Number(input.nowUnix)) : nowUnixSeconds();
-  const durationSeconds = clampDurationSeconds(input.durationSeconds);
   const kind = normalizeReminderKind(input.kind);
+  const scheduleMode = normalizeReminderScheduleMode(input.scheduleMode, kind);
+  const repeatWeekdays = sanitizeRepeatWeekdays(input.repeatWeekdays);
   const title = normalizeReminderTitle(input.title, kind);
+  const fallbackDurationSeconds = clampDurationSeconds(input.durationSeconds);
+  const resolvedTriggerAtUnix =
+    Number.isFinite(input.triggerAtUnix) && input.triggerAtUnix !== undefined
+      ? Math.floor(Number(input.triggerAtUnix))
+      : nowUnix + fallbackDurationSeconds;
+  const triggerAtUnix = Math.max(nowUnix, resolvedTriggerAtUnix);
+  const durationSeconds =
+    scheduleMode === 'date-time' ? Math.max(0, triggerAtUnix - nowUnix) : clampDurationSeconds(input.durationSeconds);
 
   return {
     id: createReminderId(),
@@ -289,7 +339,9 @@ export function createReminderTask(input: CreateReminderTaskInput): ReminderTask
     title,
     note: normalizeOptionalText(input.note, 500),
     durationSeconds,
-    triggerAtUnix: nowUnix + durationSeconds,
+    triggerAtUnix,
+    scheduleMode,
+    repeatWeekdays: repeatWeekdays.length ? repeatWeekdays : undefined,
     createdAtUnix: nowUnix,
     updatedAtUnix: nowUnix,
     status: 'pending',
@@ -368,7 +420,10 @@ export function formatReminderKind(kind: ReminderKind): string {
   if (kind === 'pomodoro') {
     return '番茄钟';
   }
-  return '自定义';
+  if (kind === 'custom-time') {
+    return '自定义时间';
+  }
+  return '自定义倒计时';
 }
 
 function sanitizeReminderRingtoneConfig(raw: unknown): ReminderRingtoneConfig | null {

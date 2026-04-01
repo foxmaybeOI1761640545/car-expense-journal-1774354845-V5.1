@@ -940,6 +940,132 @@ select:focus {
   align-content: start;
 }
 
+.reminder-form-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cross-page-link {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
+  min-width: 158px;
+  padding: 8px 14px;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  text-decoration: none;
+  position: relative;
+  overflow: hidden;
+}
+
+.cross-page-link::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.22), transparent 42%);
+  pointer-events: none;
+}
+
+.cross-page-link strong {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.cross-page-link__eyebrow {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.cross-page-link--pomodoro {
+  border-color: #d6b788;
+  background: linear-gradient(135deg, #fff9ef 0%, #f9eedc 100%);
+  color: #7f4b2a;
+}
+
+.cross-page-link--pomodoro:hover {
+  background: linear-gradient(135deg, #fff4df 0%, #f5e6cb 100%);
+}
+
+.cross-page-link--reminder {
+  border-color: #9cb5d3;
+  background: linear-gradient(135deg, #f4faff 0%, #ebf3ff 100%);
+  color: #325681;
+}
+
+.cross-page-link--reminder:hover {
+  background: linear-gradient(135deg, #e8f2ff 0%, #dfeeff 100%);
+}
+
+.reminder-pomodoro-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid #d6b788;
+  background: linear-gradient(135deg, #fff9ef 0%, #f9eedc 100%);
+  color: #7f4b2a;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.reminder-pomodoro-link:hover {
+  background: linear-gradient(135deg, #fff4df 0%, #f5e6cb 100%);
+}
+
+.reminder-create-section {
+  display: grid;
+  gap: 10px;
+  border: 1px dashed #dfc9ac;
+  border-radius: 12px;
+  background: #fffaf2;
+  padding: 12px;
+}
+
+.reminder-create-section__head {
+  display: grid;
+  gap: 4px;
+}
+
+.reminder-mode-btn {
+  min-height: 36px;
+}
+
+.reminder-mode-btn--active {
+  border-color: #cc926a;
+  background: #faefe1;
+  color: #7a4630;
+}
+
+.reminder-weekday-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.reminder-weekday-btn {
+  min-height: 36px;
+  padding: 6px 8px;
+}
+
+.reminder-weekday-btn--active {
+  border-color: #c77f60;
+  background: #f8e3db;
+  color: #7d3b33;
+}
+
 .reminder-channel-card {
   grid-column: span 6;
   display: grid;
@@ -1266,6 +1392,10 @@ select:focus {
     min-width: 100%;
   }
 
+  .cross-page-link {
+    width: 100%;
+  }
+
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
@@ -1300,6 +1430,10 @@ select:focus {
   .form-grid,
   .filter-grid {
     grid-template-columns: 1fr;
+  }
+
+  .reminder-weekday-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .page-header {

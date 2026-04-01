@@ -1,27 +1,89 @@
 <template>
   <main class="page page--reminder">
-    <PageHeader title="提醒中心" description="支持停车提醒与自定义倒计时；番茄钟请前往独立页面。页面保持打开时可在线提醒。" />
+    <PageHeader title="提醒中心" description="支持自定义倒计时、自定义时间与停车提醒；番茄钟请前往独立页面。页面保持打开时可在线提醒。" />
 
     <section class="reminder-grid">
-      <article class="card reminder-form-card">
+            <article class="card reminder-form-card">
         <h2>创建提醒</h2>
         <form class="form-grid reminder-form" @submit.prevent="handleCreateReminder">
-          <label>
-            提醒类型
-            <select v-model="formKind">
-              <option value="custom">自定义</option>
-              <option value="parking">停车提醒</option>
-            </select>
-          </label>
-          <label>
+          <div class="inline-actions full-width reminder-kind-switch">
+            <button
+              class="btn btn--ghost reminder-kind-switch__btn"
+              :class="{ 'reminder-kind-switch__btn--active': formKind === 'custom' }"
+              type="button"
+              @click="formKind = 'custom'"
+            >
+              自定义倒计时
+            </button>
+            <button
+              class="btn btn--ghost reminder-kind-switch__btn"
+              :class="{ 'reminder-kind-switch__btn--active': formKind === 'custom-time' }"
+              type="button"
+              @click="formKind = 'custom-time'"
+            >
+              自定义时间
+            </button>
+            <button
+              class="btn btn--ghost reminder-kind-switch__btn"
+              :class="{ 'reminder-kind-switch__btn--active': formKind === 'parking' }"
+              type="button"
+              @click="formKind = 'parking'"
+            >
+              停车提醒
+            </button>
+          </div>
+          <label v-if="formKind === 'custom'">
             倒计时分钟数
             <input v-model.number="formDurationMinutes" type="number" min="0" max="20160" step="1" />
           </label>
-          <label>
+          <label v-if="formKind === 'custom'">
             秒（默认 00）
             <input v-model.number="formDurationSeconds" type="number" min="0" max="59" step="1" />
           </label>
-          <p class="hint full-width">当前总时长：{{ formattedFormDuration }}</p>
+          <p v-if="formKind === 'custom'" class="hint full-width">当前总时长：{{ formattedFormDuration }}</p>
+          <p v-if="formKind === 'parking'" class="hint full-width">固定时长：180 分钟 00 秒</p>
+          <div v-if="formKind === 'custom-time'" class="form-grid full-width">
+            <label>
+              日期时间输入方式
+              <select v-model="customTimeDateInputMode">
+                <option value="picker">闹钟选择</option>
+                <option value="manual">手动输入</option>
+              </select>
+            </label>
+            <label v-if="customTimeDateInputMode === 'picker'">
+              日期时间
+              <input v-model="customTimeDateTimeInput" type="datetime-local" />
+            </label>
+            <label v-else>
+              手动日期时间
+              <input v-model.trim="customTimeDateTimeManualInput" type="text" placeholder="YYYY-MM-DD HH:mm(:ss)" />
+            </label>
+            <label>
+              重复日期输入方式
+              <select v-model="customTimeRepeatInputMode">
+                <option value="picker">选择星期</option>
+                <option value="manual">手动输入</option>
+              </select>
+            </label>
+            <div v-if="customTimeRepeatInputMode === 'picker'" class="full-width reminder-weekday-grid">
+              <button
+                v-for="option in weekdayOptions"
+                :key="option.value"
+                class="btn btn--ghost reminder-weekday-btn"
+                :class="{ 'reminder-weekday-btn--active': customTimeRepeatWeekdays.includes(option.value) }"
+                type="button"
+                @click="toggleCustomTimeWeekday(option.value)"
+              >
+                {{ option.label }}
+              </button>
+            </div>
+            <label v-else class="full-width">
+              手动重复星期
+              <input v-model.trim="customTimeRepeatManualInput" type="text" placeholder="例如：1,3,5（1=周一，7=周日）" />
+            </label>
+            <p class="hint full-width">手动输入会进行正则校验，空值表示不重复。</p>
+            <p class="hint full-width">重复设置：{{ customTimeRepeatInputMode === 'picker' ? formatRepeatWeekdaysText(customTimeRepeatWeekdays) : (customTimeRepeatManualInput.trim() || '不重复') }}</p>
+          </div>
           <label class="full-width">
             标题（可选）
             <input v-model.trim="formTitle" type="text" maxlength="80" placeholder="留空自动按类型命名" />
@@ -40,8 +102,10 @@
           </label>
           <div class="inline-actions full-width">
             <button class="btn btn--primary" type="submit">创建提醒</button>
-            <button class="btn btn--ghost" type="button" @click="applyTemplateDuration('parking')">停车 180:00</button>
-            <RouterLink class="btn btn--ghost" to="/pomodoro">番茄钟页面</RouterLink>
+            <RouterLink class="cross-page-link cross-page-link--pomodoro" to="/pomodoro">
+              <span class="cross-page-link__eyebrow">专注模式</span>
+              <strong>番茄钟页面</strong>
+            </RouterLink>
           </div>
         </form>
       </article>
@@ -171,6 +235,7 @@
               </div>
               <p class="hint">到点时间：{{ toLocalDateTimeText(task.triggerAtUnix) }}</p>
               <p class="hint">触发时间：{{ toLocalDateTimeText(task.firedAtUnix ?? task.updatedAtUnix) }}</p>
+              <p class="hint">{{ formatTaskScheduleText(task) }}</p>
               <p v-if="task.note" class="muted">{{ task.note }}</p>
             </div>
             <div class="inline-actions">
@@ -192,6 +257,7 @@
               </div>
               <p class="hint">剩余时间：{{ formatRemainingText(task) }}</p>
               <p class="hint">到点时间：{{ toLocalDateTimeText(task.triggerAtUnix) }}</p>
+              <p class="hint">{{ formatTaskScheduleText(task) }}</p>
               <p v-if="task.note" class="muted">{{ task.note }}</p>
             </div>
             <div class="inline-actions">
@@ -218,6 +284,7 @@
               </div>
               <p class="hint">创建时间：{{ toLocalDateTimeText(task.createdAtUnix) }}</p>
               <p class="hint">到点时间：{{ toLocalDateTimeText(task.triggerAtUnix) }}</p>
+              <p class="hint">{{ formatTaskScheduleText(task) }}</p>
               <p v-if="task.status === 'fired'" class="hint">
                 确认时间：{{ toLocalDateTimeText(task.acknowledgedAtUnix ?? task.updatedAtUnix) }}
               </p>
@@ -262,8 +329,8 @@ import {
   upsertReminderTask,
 } from '../services/reminderService';
 import { useAppStore } from '../stores/appStore';
-import type { ReminderKind, ReminderRingtoneConfig, ReminderRingtoneSourceMode, ReminderSynthPatternConfig, ReminderTask } from '../types/reminder';
-import { nowUnixSeconds, toLocalDateTime, unixSecondsToIsoString } from '../utils/date';
+import type { ReminderRingtoneConfig, ReminderRingtoneSourceMode, ReminderSynthPatternConfig, ReminderTask } from '../types/reminder';
+import { nowUnixSeconds, parseDateTimeLocalToUnix, toLocalDateTime, unixSecondsToIsoString } from '../utils/date';
 
 const MAX_RINGTONE_BYTES = 1_500_000;
 const RINGTONE_FILE_ACCEPT =
@@ -321,18 +388,29 @@ interface ActiveRingtoneTarget {
   fallbackReason?: string;
 }
 
+type FormReminderKind = 'custom' | 'custom-time' | 'parking';
+
 const MOBILE_BREAKPOINT = 767;
+const PARKING_DURATION_SECONDS = 180 * 60;
+const MANUAL_DATE_TIME_REGEX = /^\s*(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?\s*$/;
+const MANUAL_REPEAT_WEEKDAYS_REGEX = /^\s*(?:[1-7](?:\s*[,，]\s*[1-7])*)?\s*$/;
 
 const store = useAppStore();
 const tasks = ref<ReminderTask[]>([]);
 const nowUnix = ref(nowUnixSeconds());
-const formKind = ref<ReminderKind>('custom');
+const formKind = ref<FormReminderKind>('custom');
 const formTitle = ref('');
 const formNote = ref('');
 const formDurationMinutes = ref(0);
 const formDurationSeconds = ref(0);
 const formSoundEnabled = ref(true);
 const formNotificationEnabled = ref(true);
+const customTimeDateInputMode = ref<'picker' | 'manual'>('picker');
+const customTimeDateTimeInput = ref('');
+const customTimeDateTimeManualInput = ref('');
+const customTimeRepeatInputMode = ref<'picker' | 'manual'>('picker');
+const customTimeRepeatWeekdays = ref<number[]>([]);
+const customTimeRepeatManualInput = ref('');
 const notificationPermission = ref<'unsupported' | NotificationPermission>(getNotificationPermission());
 const soundPrimed = ref(false);
 const customRingtoneConfig = ref<ReminderRingtoneConfig | null>(loadReminderRingtoneConfig());
@@ -390,6 +468,15 @@ const formattedFormDuration = computed(() =>
     .toString()
     .padStart(2, '0')}`,
 );
+const weekdayOptions = [
+  { value: 1, label: '周一' },
+  { value: 2, label: '周二' },
+  { value: 3, label: '周三' },
+  { value: 4, label: '周四' },
+  { value: 5, label: '周五' },
+  { value: 6, label: '周六' },
+  { value: 7, label: '周日' },
+];
 const ringtoneFileAccept = RINGTONE_FILE_ACCEPT;
 const notificationPermissionText = computed(() => {
   if (notificationPermission.value === 'unsupported') {
@@ -521,7 +608,7 @@ watch(
 
 watch(formKind, (value) => {
   if (value === 'parking') {
-    formDurationMinutes.value = 180;
+    formDurationMinutes.value = PARKING_DURATION_SECONDS / 60;
     formDurationSeconds.value = 0;
     if (!formTitle.value.trim()) {
       formTitle.value = '停车提醒';
@@ -529,10 +616,20 @@ watch(formKind, (value) => {
     return;
   }
 
+  if (value === 'custom-time') {
+    formDurationMinutes.value = 0;
+    formDurationSeconds.value = 0;
+    resetCustomTimeFormFields();
+    if (!formTitle.value.trim()) {
+      formTitle.value = '自定义时间提醒';
+    }
+    return;
+  }
+
   formDurationMinutes.value = 0;
   formDurationSeconds.value = 0;
   if (!formTitle.value.trim()) {
-    formTitle.value = '自定义提醒';
+    formTitle.value = '自定义倒计时提醒';
   }
 });
 
@@ -609,10 +706,6 @@ function toggleChannelCardCollapsed(): void {
   isChannelCardCollapsed.value = !isChannelCardCollapsed.value;
 }
 
-function applyTemplateDuration(kind: ReminderKind): void {
-  formKind.value = kind;
-}
-
 function handleRingtoneSourceModeChange(): void {
   saveReminderRingtoneSourceMode(ringtoneSourceMode.value);
   stopLoopingSound();
@@ -636,7 +729,186 @@ function toLocalDateTimeText(unixSeconds: number): string {
   return toLocalDateTime(unixSecondsToIsoString(unixSeconds));
 }
 
-function resolveDurationSecondsFromForm(): number {
+function normalizeWeekdayValue(value: number): number | null {
+  const parsed = Math.floor(Number(value));
+  if (!Number.isFinite(parsed) || parsed < 1 || parsed > 7) {
+    return null;
+  }
+  return parsed;
+}
+
+function normalizeRepeatWeekdays(values: number[]): number[] {
+  const normalized = values
+    .map((item) => normalizeWeekdayValue(item))
+    .filter((item): item is number => item !== null);
+
+  return Array.from(new Set<number>(normalized)).sort((a, b) => a - b);
+}
+
+function weekdayFromDate(date: Date): number {
+  const weekday = date.getDay();
+  return weekday === 0 ? 7 : weekday;
+}
+
+function formatRepeatWeekdaysText(weekdays?: number[]): string {
+  const normalized = normalizeRepeatWeekdays(weekdays ?? []);
+  if (!normalized.length) {
+    return '不重复';
+  }
+
+  return normalized
+    .map((weekday) => weekdayOptions.find((item) => item.value === weekday)?.label ?? `周${weekday}`)
+    .join('、');
+}
+
+function formatTaskScheduleText(task: ReminderTask): string {
+  if (task.scheduleMode === 'date-time') {
+    return `计划类型：自定义时间（${formatRepeatWeekdaysText(task.repeatWeekdays)}）`;
+  }
+  return '计划类型：倒计时';
+}
+
+function parseManualDateTimeToUnix(raw: string): number | undefined {
+  const matched = MANUAL_DATE_TIME_REGEX.exec(raw.trim());
+  if (!matched) {
+    return undefined;
+  }
+
+  const year = Number(matched[1]);
+  const month = Number(matched[2]);
+  const day = Number(matched[3]);
+  const hour = Number(matched[4]);
+  const minute = Number(matched[5]);
+  const second = Number(matched[6] ?? '0');
+
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hour) ||
+    !Number.isFinite(minute) ||
+    !Number.isFinite(second)
+  ) {
+    return undefined;
+  }
+
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 59) {
+    return undefined;
+  }
+
+  const parsed = new Date(year, month - 1, day, hour, minute, second, 0);
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== month - 1 ||
+    parsed.getDate() !== day ||
+    parsed.getHours() !== hour ||
+    parsed.getMinutes() !== minute ||
+    parsed.getSeconds() !== second
+  ) {
+    return undefined;
+  }
+
+  return Math.floor(parsed.getTime() / 1000);
+}
+
+function parseRepeatWeekdaysFromManualInput(raw: string): number[] {
+  if (!MANUAL_REPEAT_WEEKDAYS_REGEX.test(raw)) {
+    throw new Error('重复日期格式无效，请输入 1-7（逗号分隔），例如 1,3,5。');
+  }
+
+  const text = raw.trim();
+  if (!text) {
+    return [];
+  }
+
+  const numbers = text
+    .split(/[,，]/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0)
+    .map((item) => Number(item));
+
+  return normalizeRepeatWeekdays(numbers);
+}
+
+function resolveNextRepeatTriggerAtUnix(baseTriggerAtUnix: number, repeatWeekdays: number[], referenceUnix: number): number {
+  const normalizedRepeatWeekdays = normalizeRepeatWeekdays(repeatWeekdays);
+  if (!normalizedRepeatWeekdays.length) {
+    return baseTriggerAtUnix;
+  }
+
+  const baseDate = new Date(baseTriggerAtUnix * 1000);
+  if (Number.isNaN(baseDate.getTime())) {
+    throw new Error('自定义时间无效，请重新设置。');
+  }
+
+  const hour = baseDate.getHours();
+  const minute = baseDate.getMinutes();
+  const second = baseDate.getSeconds();
+  const searchFrom = new Date((referenceUnix + 1) * 1000);
+
+  for (let offset = 0; offset <= 21; offset += 1) {
+    const candidate = new Date(searchFrom);
+    candidate.setDate(searchFrom.getDate() + offset);
+    candidate.setHours(hour, minute, second, 0);
+
+    const weekday = weekdayFromDate(candidate);
+    if (!normalizedRepeatWeekdays.includes(weekday)) {
+      continue;
+    }
+
+    const candidateUnix = Math.floor(candidate.getTime() / 1000);
+    if (candidateUnix > referenceUnix) {
+      return candidateUnix;
+    }
+  }
+
+  throw new Error('无法计算下一个重复时间，请检查重复日期配置。');
+}
+
+function toggleCustomTimeWeekday(weekday: number): void {
+  const normalizedWeekday = normalizeWeekdayValue(weekday);
+  if (!normalizedWeekday) {
+    return;
+  }
+
+  if (customTimeRepeatWeekdays.value.includes(normalizedWeekday)) {
+    customTimeRepeatWeekdays.value = customTimeRepeatWeekdays.value.filter((item) => item !== normalizedWeekday);
+    return;
+  }
+
+  customTimeRepeatWeekdays.value = normalizeRepeatWeekdays([...customTimeRepeatWeekdays.value, normalizedWeekday]);
+}
+
+function resolveCustomTimeTriggerAtFromForm(referenceUnix: number): { triggerAtUnix: number; repeatWeekdays: number[] } {
+  const rawTriggerAtUnix =
+    customTimeDateInputMode.value === 'manual'
+      ? parseManualDateTimeToUnix(customTimeDateTimeManualInput.value)
+      : parseDateTimeLocalToUnix(customTimeDateTimeInput.value);
+
+  if (rawTriggerAtUnix === undefined || !Number.isFinite(rawTriggerAtUnix)) {
+    throw new Error('请设置有效的日期时间。手动输入格式示例：2026-04-02 08:30 或 2026-04-02 08:30:15。');
+  }
+
+  let triggerAtUnix = Math.floor(rawTriggerAtUnix);
+  const repeatWeekdays =
+    customTimeRepeatInputMode.value === 'manual'
+      ? parseRepeatWeekdaysFromManualInput(customTimeRepeatManualInput.value)
+      : normalizeRepeatWeekdays(customTimeRepeatWeekdays.value);
+
+  if (repeatWeekdays.length > 0) {
+    const referenceForRepeat = Math.max(referenceUnix, triggerAtUnix - 1);
+    triggerAtUnix = resolveNextRepeatTriggerAtUnix(triggerAtUnix, repeatWeekdays, referenceForRepeat);
+  } else if (triggerAtUnix <= referenceUnix) {
+    throw new Error('自定义时间需要晚于当前时间；若希望自动循环，请设置重复日期。');
+  }
+
+  return {
+    triggerAtUnix,
+    repeatWeekdays,
+  };
+}
+
+function resolveCountdownDurationSecondsFromForm(): number {
   const parsedMinutes = Number(formDurationMinutes.value);
   const parsedSeconds = Number(formDurationSeconds.value);
 
@@ -662,30 +934,87 @@ function resolveDurationSecondsFromForm(): number {
   return total;
 }
 
+function resetCustomTimeFormFields(): void {
+  customTimeDateInputMode.value = 'picker';
+  customTimeDateTimeInput.value = '';
+  customTimeDateTimeManualInput.value = '';
+  customTimeRepeatInputMode.value = 'picker';
+  customTimeRepeatWeekdays.value = [];
+  customTimeRepeatManualInput.value = '';
+}
+
 function handleCreateReminder(): void {
-  let durationSeconds = 0;
+  const createAtUnix = nowUnixSeconds();
+  let task: ReminderTask;
+
   try {
-    durationSeconds = resolveDurationSecondsFromForm();
+    if (formKind.value === 'parking') {
+      task = createReminderTask({
+        kind: 'parking',
+        title: formTitle.value,
+        note: formNote.value,
+        durationSeconds: PARKING_DURATION_SECONDS,
+        scheduleMode: 'countdown',
+        soundEnabled: formSoundEnabled.value,
+        notificationEnabled: formNotificationEnabled.value,
+        nowUnix: createAtUnix,
+      });
+    } else if (formKind.value === 'custom-time') {
+      const { triggerAtUnix, repeatWeekdays } = resolveCustomTimeTriggerAtFromForm(createAtUnix);
+      task = createReminderTask({
+        kind: 'custom-time',
+        title: formTitle.value,
+        note: formNote.value,
+        durationSeconds: Math.max(0, triggerAtUnix - createAtUnix),
+        scheduleMode: 'date-time',
+        triggerAtUnix,
+        repeatWeekdays,
+        soundEnabled: formSoundEnabled.value,
+        notificationEnabled: formNotificationEnabled.value,
+        nowUnix: createAtUnix,
+      });
+    } else {
+      const durationSeconds = resolveCountdownDurationSecondsFromForm();
+      task = createReminderTask({
+        kind: 'custom',
+        title: formTitle.value,
+        note: formNote.value,
+        durationSeconds,
+        scheduleMode: 'countdown',
+        soundEnabled: formSoundEnabled.value,
+        notificationEnabled: formNotificationEnabled.value,
+        nowUnix: createAtUnix,
+      });
+    }
   } catch (error) {
-    store.showToast(error instanceof Error ? error.message : '倒计时时间无效。', 'error');
+    store.showToast(error instanceof Error ? error.message : '提醒参数无效。', 'error');
     return;
   }
 
-  const task = createReminderTask({
-    kind: formKind.value,
-    title: formTitle.value,
-    note: formNote.value,
-    durationSeconds,
-    soundEnabled: formSoundEnabled.value,
-    notificationEnabled: formNotificationEnabled.value,
-  });
-
   persistTasks(upsertReminderTask(tasks.value, task));
-  store.showToast(`提醒已创建：${task.title}，将在 ${formatDuration(durationSeconds)} 后触发。`, 'success');
+  if (task.scheduleMode === 'date-time') {
+    store.showToast(
+      `提醒已创建：${task.title}，触发时间 ${toLocalDateTimeText(task.triggerAtUnix)}（${formatRepeatWeekdaysText(task.repeatWeekdays)}）。`,
+      'success',
+    );
+  } else {
+    store.showToast(`提醒已创建：${task.title}，将在 ${formatDuration(task.durationSeconds)} 后触发。`, 'success');
+  }
 
   formTitle.value = '';
   formNote.value = '';
-  nowUnix.value = nowUnixSeconds();
+
+  if (formKind.value === 'custom-time') {
+    resetCustomTimeFormFields();
+  } else if (formKind.value === 'custom') {
+    formDurationMinutes.value = 0;
+    formDurationSeconds.value = 0;
+  } else {
+    formDurationMinutes.value = 180;
+    formDurationSeconds.value = 0;
+  }
+
+  nowUnix.value = createAtUnix;
 }
 
 function cancelTask(taskId: string): void {
@@ -1595,8 +1924,43 @@ function emitReminderAlert(task: ReminderTask): void {
   }
 }
 
+function buildNextRepeatTaskIfNeeded(task: ReminderTask, referenceUnix: number): ReminderTask | null {
+  if (task.scheduleMode !== 'date-time' || task.kind !== 'custom-time') {
+    return null;
+  }
+
+  const repeatWeekdays = normalizeRepeatWeekdays(task.repeatWeekdays ?? []);
+  if (repeatWeekdays.length === 0) {
+    return null;
+  }
+
+  let nextTriggerAtUnix = 0;
+  try {
+    nextTriggerAtUnix = resolveNextRepeatTriggerAtUnix(task.triggerAtUnix, repeatWeekdays, referenceUnix);
+  } catch {
+    return null;
+  }
+  if (nextTriggerAtUnix <= referenceUnix) {
+    return null;
+  }
+
+  return createReminderTask({
+    kind: 'custom-time',
+    title: task.title,
+    note: task.note,
+    durationSeconds: Math.max(0, nextTriggerAtUnix - referenceUnix),
+    scheduleMode: 'date-time',
+    triggerAtUnix: nextTriggerAtUnix,
+    repeatWeekdays,
+    soundEnabled: task.soundEnabled,
+    notificationEnabled: task.notificationEnabled,
+    nowUnix: referenceUnix,
+  });
+}
+
 function triggerDueReminders(): void {
   const dueTasks: ReminderTask[] = [];
+  const nextRepeatTasks: ReminderTask[] = [];
   const nextTasks = tasks.value.map((task) => {
     if (task.status !== 'pending') {
       return task;
@@ -1611,6 +1975,11 @@ function triggerDueReminders(): void {
     }
 
     inFlightDueIds.add(task.id);
+    const nextRepeatTask = buildNextRepeatTaskIfNeeded(task, nowUnix.value);
+    if (nextRepeatTask) {
+      nextRepeatTasks.push(nextRepeatTask);
+    }
+
     const firedTask = markReminderFired(task, nowUnix.value);
     dueTasks.push(firedTask);
     return firedTask;
@@ -1620,7 +1989,8 @@ function triggerDueReminders(): void {
     return;
   }
 
-  persistTasks(nextTasks);
+  const withRepeatTasks = nextRepeatTasks.reduce((currentTasks, repeatTask) => upsertReminderTask(currentTasks, repeatTask), nextTasks);
+  persistTasks(withRepeatTasks);
   void syncLoopingSoundLoop();
 
   dueTasks.forEach((task) => {

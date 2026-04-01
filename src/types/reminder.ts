@@ -1,6 +1,7 @@
-export type ReminderKind = 'parking' | 'pomodoro' | 'custom';
+export type ReminderKind = 'parking' | 'pomodoro' | 'custom' | 'custom-time';
 
 export type ReminderStatus = 'pending' | 'fired' | 'cancelled';
+export type ReminderScheduleMode = 'countdown' | 'date-time';
 
 export type ReminderRingtoneSourceMode = 'auto' | 'uploaded' | 'default-file' | 'synth';
 
@@ -11,6 +12,8 @@ export interface ReminderTask {
   note?: string;
   durationSeconds: number;
   triggerAtUnix: number;
+  scheduleMode?: ReminderScheduleMode;
+  repeatWeekdays?: number[];
   createdAtUnix: number;
   updatedAtUnix: number;
   status: ReminderStatus;
@@ -27,6 +30,9 @@ export interface CreateReminderTaskInput {
   title?: string;
   note?: string;
   durationSeconds: number;
+  scheduleMode?: ReminderScheduleMode;
+  triggerAtUnix?: number;
+  repeatWeekdays?: number[];
   soundEnabled: boolean;
   notificationEnabled: boolean;
   nowUnix?: number;
