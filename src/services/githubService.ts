@@ -144,6 +144,14 @@ function normalizeRecordsDir(dir: string): string {
   return dir.replace(/^\/+|\/+$/g, '');
 }
 
+function normalizeBackendBaseUrl(config: AppConfig): string {
+  return config.reminderApiBaseUrl.trim().replace(/\/+$/, '');
+}
+
+function isSealedGithubToken(token: string): boolean {
+  return /^pat\.sealed\.[^.]+\./.test(token.trim());
+}
+
 function normalizeDeviceId(deviceId?: string): string | undefined {
   const value = deviceId?.trim();
   return value ? value : undefined;
@@ -162,6 +170,10 @@ function validateGithubConfig(config: AppConfig, token: string): void {
 
   if (missing.length > 0 || !token.trim()) {
     throw new Error('GitHub 配置不完整，请先填写 owner/repo/token/recordsDir。');
+  }
+
+  if (isSealedGithubToken(token) && !normalizeBackendBaseUrl(config)) {
+    throw new Error('当前 Token 为后端密封 Token，请先配置提醒后端地址（reminderApiBaseUrl）。');
   }
 }
 
@@ -209,6 +221,79 @@ function makePutPayload(base: { message: string; content: string; sha?: string }
   }
 
   return payload;
+}
+
+async function fetchGithubContentsGet(
+  config: AppConfig,
+  token: string,
+  path: string,
+  mode: 'get' | 'list',
+): Promise<Response> {
+  if (isSealedGithubToken(token)) {
+    const backendBaseUrl = normalizeBackendBaseUrl(config);
+    if (!backendBaseUrl) {
+      throw new Error('当前 Token 为后端密封 Token，请先配置提醒后端地址（reminderApiBaseUrl）。');
+    }
+
+    return fetch(`${backendBaseUrl}/api/github/contents/${mode}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        sealedToken: token,
+        owner: config.githubOwner.trim(),
+        repo: config.githubRepo.trim(),
+        branch: config.githubBranch.trim() || undefined,
+        path,
+      }),
+    });
+  }
+
+  const refQuery = makeRefQuery(config);
+  const endpoint = `${makeGithubEndpoint(config, path)}${refQuery}`;
+  return fetch(endpoint, {
+    method: 'GET',
+    headers: makeGithubHeaders(token),
+  });
+}
+
+async function fetchGithubContentsPut(
+  config: AppConfig,
+  token: string,
+  path: string,
+  payload: { message: string; content: string; sha?: string; branch?: string },
+): Promise<Response> {
+  if (isSealedGithubToken(token)) {
+    const backendBaseUrl = normalizeBackendBaseUrl(config);
+    if (!backendBaseUrl) {
+      throw new Error('当前 Token 为后端密封 Token，请先配置提醒后端地址（reminderApiBaseUrl）。');
+    }
+
+    return fetch(`${backendBaseUrl}/api/github/contents/put`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        sealedToken: token,
+        owner: config.githubOwner.trim(),
+        repo: config.githubRepo.trim(),
+        branch: config.githubBranch.trim() || undefined,
+        path,
+        payload,
+      }),
+    });
+  }
+
+  const endpoint = makeGithubEndpoint(config, path);
+  return fetch(endpoint, {
+    method: 'PUT',
+    headers: makeGithubHeaders(token),
+    body: JSON.stringify(payload),
+  });
 }
 
 function normalizeOptionalText(value: unknown): string | undefined {
@@ -538,33 +623,13 @@ function toFuelBalanceAdjustmentGithubEntry(log: FuelBalanceAdjustmentLog): Fuel
   };
 }
 
-async function fetchGithubJson<T>(endpoint: string, token: string): Promise<T> {
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: makeGithubHeaders(token),
-  });
-
-  if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
-    const message = body.message ?? `HTTP ${response.status}`;
-    throw new Error(`GitHub 读取失败：${message}`);
-  }
-
-  return (await response.json()) as T;
-}
-
 async function fetchGithubDirectoryItems(
   config: AppConfig,
   token: string,
   path: string,
   options: { allowNotFound?: boolean } = {},
 ): Promise<GithubContentItem[]> {
-  const refQuery = makeRefQuery(config);
-  const endpoint = `${makeGithubEndpoint(config, path)}${refQuery}`;
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: makeGithubHeaders(token),
-  });
+  const response = await fetchGithubContentsGet(config, token, path, 'list');
 
   if (response.status === 404 && options.allowNotFound) {
     return [];
@@ -586,12 +651,7 @@ async function fetchGithubFileBody(
   path: string,
   options: { allowNotFound?: boolean } = {},
 ): Promise<GithubContentFileBody | null> {
-  const refQuery = makeRefQuery(config);
-  const endpoint = `${makeGithubEndpoint(config, path)}${refQuery}`;
-  const response = await fetch(endpoint, {
-    method: 'GET',
-    headers: makeGithubHeaders(token),
-  });
+  const response = await fetchGithubContentsGet(config, token, path, 'get');
 
   if (response.status === 404 && options.allowNotFound) {
     return null;
@@ -607,9 +667,10 @@ async function fetchGithubFileBody(
 }
 
 async function fetchAndParseJsonFile(config: AppConfig, token: string, path: string): Promise<unknown> {
-  const refQuery = makeRefQuery(config);
-  const endpoint = `${makeGithubEndpoint(config, path)}${refQuery}`;
-  const fileBody = await fetchGithubJson<GithubContentFileBody>(endpoint, token);
+  const fileBody = await fetchGithubFileBody(config, token, path);
+  if (!fileBody) {
+    throw new Error(`GitHub 文件不存在：${path}`);
+  }
 
   if (fileBody.encoding !== 'base64' || typeof fileBody.content !== 'string') {
     throw new Error(`GitHub 文件格式不支持：${path}`);
@@ -714,7 +775,6 @@ export async function submitRecordToGithub(record: AppRecord, config: AppConfig,
   validateGithubConfig(config, token);
 
   const path = getRecordPath(config, record.id);
-  const endpoint = makeGithubEndpoint(config, path);
   const currentBody = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
   const payload = makePutPayload(
     {
@@ -725,11 +785,7 @@ export async function submitRecordToGithub(record: AppRecord, config: AppConfig,
     config,
   );
 
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers: makeGithubHeaders(token),
-    body: JSON.stringify(payload),
-  });
+  const response = await fetchGithubContentsPut(config, token, path, payload);
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
@@ -752,7 +808,6 @@ export async function submitRecordTombstoneToGithub(
   validateGithubConfig(config, token);
 
   const path = getRecordTombstonePath(config, tombstone.recordId);
-  const endpoint = makeGithubEndpoint(config, path);
   const currentBody = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
 
   let currentSha = currentBody?.sha;
@@ -793,11 +848,7 @@ export async function submitRecordTombstoneToGithub(
     config,
   );
 
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers: makeGithubHeaders(token),
-    body: JSON.stringify(payload),
-  });
+  const response = await fetchGithubContentsPut(config, token, path, payload);
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
@@ -865,7 +916,6 @@ export async function uploadUserAvatarToGithub(
   const unixTime = Math.floor(Date.now() / 1000);
   const avatar = normalizeDataUrlForGithubAvatar(dataUrl);
   const path = makeUserAvatarPath(config, avatar.extension, unixTime, deviceId);
-  const endpoint = makeGithubEndpoint(config, path);
   const payload = makePutPayload(
     {
       message: `chore(profile): upload avatar ${unixTime}`,
@@ -874,11 +924,7 @@ export async function uploadUserAvatarToGithub(
     config,
   );
 
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers: makeGithubHeaders(token),
-    body: JSON.stringify(payload),
-  });
+  const response = await fetchGithubContentsPut(config, token, path, payload);
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
@@ -903,7 +949,6 @@ export async function submitUserProfileToGithub(
 
   const normalizedDeviceId = normalizeDeviceId(deviceId);
   const path = normalizedDeviceId ? getDeviceUserProfilePath(config, normalizedDeviceId) : getLegacyUserProfilePath(config);
-  const endpoint = makeGithubEndpoint(config, path);
   const currentBody = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
   const payload = makePutPayload(
     {
@@ -914,11 +959,7 @@ export async function submitUserProfileToGithub(
     config,
   );
 
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers: makeGithubHeaders(token),
-    body: JSON.stringify(payload),
-  });
+  const response = await fetchGithubContentsPut(config, token, path, payload);
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
@@ -1001,16 +1042,10 @@ export async function appendFuelBalanceAdjustmentToGithub(
   validateGithubConfig(config, token);
 
   const path = getFuelBalanceAdjustmentPath(config, adjustment);
-  const endpoint = makeGithubEndpoint(config, path);
-  const refQuery = makeRefQuery(config);
-  const headers = makeGithubHeaders(token);
 
   let sha: string | undefined;
   let currentEntries: FuelBalanceAdjustmentGithubEntry[] = [];
-  const currentResponse = await fetch(`${endpoint}${refQuery}`, {
-    method: 'GET',
-    headers,
-  });
+  const currentResponse = await fetchGithubContentsGet(config, token, path, 'get');
 
   if (currentResponse.status === 404) {
     currentEntries = [];
@@ -1054,11 +1089,7 @@ export async function appendFuelBalanceAdjustmentToGithub(
     config,
   );
 
-  const response = await fetch(endpoint, {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify(payload),
-  });
+  const response = await fetchGithubContentsPut(config, token, path, payload);
 
   if (!response.ok) {
     const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
@@ -1085,7 +1116,6 @@ export async function uploadReminderRingtoneToGithub(
   const mimeType = normalizeReminderAudioMimeType(input.mimeType) ?? parsedDataUrl.mimeType;
   const safeFileName = sanitizeReminderAudioFileName(fileNameRaw || `custom-ringtone.${detectAudioExtensionByMimeType(mimeType)}`);
   const audioPath = getReminderAudioUploadPath(config, safeFileName);
-  const audioEndpoint = makeGithubEndpoint(config, audioPath);
   const currentAudioBody = await fetchGithubFileBody(config, token, audioPath, { allowNotFound: true });
   const audioPayload = makePutPayload(
     {
@@ -1096,11 +1126,7 @@ export async function uploadReminderRingtoneToGithub(
     config,
   );
 
-  const uploadResponse = await fetch(audioEndpoint, {
-    method: 'PUT',
-    headers: makeGithubHeaders(token),
-    body: JSON.stringify(audioPayload),
-  });
+  const uploadResponse = await fetchGithubContentsPut(config, token, audioPath, audioPayload);
 
   if (!uploadResponse.ok) {
     const body = (await uploadResponse.json().catch(() => ({}))) as GithubErrorBody;
@@ -1125,7 +1151,6 @@ export async function uploadReminderRingtoneToGithub(
   };
 
   const configPath = getReminderAudioPathConfigPath(config);
-  const configEndpoint = makeGithubEndpoint(config, configPath);
   const currentConfigBody = await fetchGithubFileBody(config, token, configPath, { allowNotFound: true });
   const configPutPayload = makePutPayload(
     {
@@ -1136,11 +1161,7 @@ export async function uploadReminderRingtoneToGithub(
     config,
   );
 
-  const configResponse = await fetch(configEndpoint, {
-    method: 'PUT',
-    headers: makeGithubHeaders(token),
-    body: JSON.stringify(configPutPayload),
-  });
+  const configResponse = await fetchGithubContentsPut(config, token, configPath, configPutPayload);
 
   if (!configResponse.ok) {
     const body = (await configResponse.json().catch(() => ({}))) as GithubErrorBody;

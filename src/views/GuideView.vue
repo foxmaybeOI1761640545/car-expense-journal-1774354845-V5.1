@@ -26,7 +26,8 @@
         <ul class="guide-list">
           <li><strong>GitHub Owner</strong>、<strong>Repo</strong>、<strong>Branch</strong>、<strong>Records 目录</strong> 放在页面设置中保存。</li>
           <li><strong>GitHub Token</strong> 只会在浏览器本地保存，不会写入配置文件。</li>
-          <li>Token 会经过转换后存储，调用 GitHub API 时再还原使用。</li>
+          <li>配置了提醒后端地址后，Token 保存时会先发送到后端密封，前端仅保存密封 Token。</li>
+          <li>密封 Token 模式下，GitHub 请求会经由后端代理，不再由浏览器直连 GitHub API。</li>
         </ul>
         <p class="muted">若 Branch 留空，将使用仓库默认分支（通常是 <code>main</code>）。</p>
       </article>

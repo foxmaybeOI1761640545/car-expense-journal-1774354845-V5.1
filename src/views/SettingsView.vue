@@ -73,7 +73,7 @@
           <input
             v-model="githubTokenInput"
             type="password"
-            placeholder="留空不变；输入则更新本地 Token Vault"
+            placeholder="留空不变；输入则调用后端密封后保存到本地"
             autocomplete="new-password"
           />
         </label>
@@ -116,6 +116,10 @@ const clearGithubTokenOnSave = ref(false);
 const clearPatWhenClearingCache = ref(false);
 const isClearingLocalCache = ref(false);
 
+function isSealedGithubToken(value: string): boolean {
+  return /^pat\.sealed\.[^.]+\./.test(value.trim());
+}
+
 const settings = reactive<AppConfig>({ ...store.state.config });
 
 watch(
@@ -148,10 +152,16 @@ const githubTokenStatusText = computed(() => {
   }
 
   if (githubTokenInput.value.trim()) {
-    return 'Token 状态：本次保存后将更新本地 Token（仅浏览器本地保存，转换后存储）。';
+    return 'Token 状态：本次保存后将调用后端密封并更新本地 Token。';
   }
 
-  return store.state.githubToken ? 'Token 状态：本地已保存（已转换存储）。' : 'Token 状态：当前未保存。';
+  if (!store.state.githubToken) {
+    return 'Token 状态：当前未保存。';
+  }
+
+  return isSealedGithubToken(store.state.githubToken)
+    ? 'Token 状态：本地已保存（后端密封 Token）。'
+    : 'Token 状态：本地已保存（旧版本地转换，建议重新保存为后端密封 Token）。';
 });
 const currentDeviceIdText = computed(() => {
   const value = store.state.deviceMeta.deviceId.trim();
@@ -161,7 +171,7 @@ const currentDeviceIdText = computed(() => {
   return value.length <= 18 ? value : `${value.slice(0, 10)}...${value.slice(-6)}`;
 });
 
-function saveSettings(): void {
+async function saveSettings(): Promise<void> {
   const defaultFuelPrice = parsePositiveNumber(settings.defaultFuelPrice);
   const defaultAverageFuelConsumptionPer100Km = parsePositiveNumber(settings.defaultAverageFuelConsumptionPer100Km);
   const defaultDistanceKm = parsePositiveNumber(settings.defaultDistanceKm);
@@ -187,15 +197,20 @@ function saveSettings(): void {
 
   let tokenMessage = 'Token 未变更。';
 
-  if (clearGithubTokenOnSave.value) {
-    store.saveGithubToken('');
-    githubTokenInput.value = '';
-    clearGithubTokenOnSave.value = false;
-    tokenMessage = 'Token 已清空。';
-  } else if (githubTokenInput.value.trim()) {
-    store.saveGithubToken(githubTokenInput.value);
-    githubTokenInput.value = '';
-    tokenMessage = 'Token 已更新到本地安全存储。';
+  try {
+    if (clearGithubTokenOnSave.value) {
+      await store.saveGithubToken('');
+      githubTokenInput.value = '';
+      clearGithubTokenOnSave.value = false;
+      tokenMessage = 'Token 已清空。';
+    } else if (githubTokenInput.value.trim()) {
+      await store.saveGithubToken(githubTokenInput.value);
+      githubTokenInput.value = '';
+      tokenMessage = 'Token 已通过后端密封并更新到本地存储。';
+    }
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '更新 GitHub Token 失败。', 'error');
+    return;
   }
 
   store.showToast(`设置已保存。${tokenMessage}`, 'success');

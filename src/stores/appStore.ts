@@ -18,6 +18,7 @@ import {
   submitUserProfileToGithub,
   uploadUserAvatarToGithub,
 } from '../services/githubService';
+import { sealGithubTokenWithBackend } from '../services/backendPatVaultService';
 import { clearGithubTokenFromVault, loadGithubTokenFromVault, saveGithubTokenToVault } from '../services/githubTokenVaultService';
 import {
   clearAppData,
@@ -126,6 +127,10 @@ interface ClearLocalCacheOptions {
 let toastTimer: number | null = null;
 const inFlightFuelBalanceAdjustmentSubmissions = new Map<string, Promise<{ path: string; sha?: string }>>();
 const inFlightRecordTombstoneSubmissions = new Map<string, Promise<{ path: string; sha?: string }>>();
+
+function isSealedGithubToken(token: string): boolean {
+  return /^pat\.sealed\.[^.]+\./.test(token.trim());
+}
 
 function createFallbackDeviceId(): string {
   const random = Math.random().toString(16).slice(2);
@@ -877,16 +882,28 @@ function updateDeviceName(deviceName: string): void {
   saveDeviceMeta(nextMeta);
 }
 
-function saveGithubToken(token: string): void {
+async function saveGithubToken(token: string): Promise<void> {
   const normalized = token.trim();
-  state.githubToken = normalized;
+  if (!normalized) {
+    state.githubToken = '';
+    clearGithubTokenFromVault();
+    return;
+  }
 
-  if (normalized) {
+  if (isSealedGithubToken(normalized)) {
+    state.githubToken = normalized;
     saveGithubTokenToVault(normalized);
     return;
   }
 
-  clearGithubTokenFromVault();
+  const backendBaseUrl = state.config.reminderApiBaseUrl.trim();
+  if (!backendBaseUrl) {
+    throw new Error('请先配置提醒后端地址（reminderApiBaseUrl），再保存 GitHub Token。');
+  }
+
+  const sealed = await sealGithubTokenWithBackend(backendBaseUrl, normalized);
+  state.githubToken = sealed.sealedToken;
+  saveGithubTokenToVault(sealed.sealedToken);
 }
 
 async function clearLocalCache(options: ClearLocalCacheOptions = {}): Promise<void> {

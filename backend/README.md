@@ -144,3 +144,24 @@ CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
 
 - 确认前端调用地址是 `https://...`（不要混用 http）
 - 若报 CORS 错误，确认 Render 环境变量 `CORS_ORIGINS` 已配置你的前端线上域名（例如 `https://foxmaybeoi1761640545.github.io`）
+
+## 8. PAT 密封与 GitHub 代理（新增）
+
+后端新增了“只处理不存储”的 PAT 密封与 GitHub Contents 代理能力：
+
+- `POST /api/token/seal`
+- `POST /api/github/contents/get`
+- `POST /api/github/contents/list`
+- `POST /api/github/contents/put`
+
+### 新增环境变量
+
+- `PAT_WRAP_KEY_BASE64`：32 字节主密钥（Base64 编码，必填）
+- `PAT_WRAP_KEY_VERSION`：密钥版本号（可选，默认 `v1`）
+- `MAX_SEAL_JSON_BODY_BYTES`：`/api/token/seal` 的 JSON 请求体上限（可选，默认 `32768`）
+- `MAX_GITHUB_PROXY_BODY_BYTES`：GitHub 代理接口 JSON 请求体上限（可选，默认 `8388608`）
+
+说明：
+
+- 后端不会持久化保存 PAT，仅在单次请求内临时解密使用。
+- 上述接口应仅通过 HTTPS 访问，且配合 `CORS_ORIGINS` 限制来源。
