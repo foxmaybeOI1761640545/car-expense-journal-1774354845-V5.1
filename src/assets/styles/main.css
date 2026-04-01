@@ -1057,6 +1057,10 @@ select:focus {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .reminder-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .overview-card,
   .summary-card,
   .totals-card,
@@ -1156,6 +1160,10 @@ select:focus {
   }
 
   .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .reminder-grid {
     grid-template-columns: 1fr;
   }
 
