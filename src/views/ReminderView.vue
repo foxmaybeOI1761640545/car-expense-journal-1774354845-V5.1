@@ -342,6 +342,7 @@ import {
 import { loadReminderDefaultAudioAsset, type ReminderResolvedDefaultAudioAsset } from '../services/reminderAudioAssetService';
 import { resolveReminderBackendBaseUrl } from '../services/reminderBackendUrlService';
 import { pingReminderBackend, type ReminderBackendPingResult } from '../services/reminderBackendService';
+import { cancelReminderInCloud, upsertReminderToCloud } from '../services/reminderCloudService';
 import {
   fetchReminderPushVapidPublicKey,
   removeReminderPushSubscription,
@@ -715,6 +716,7 @@ onMounted(() => {
   void syncLoopingSoundLoop();
   void reloadDefaultRingtoneAsset();
   void refreshPushSubscriptionStatus();
+  void syncPendingReminderTasksToCloud();
 
   ticker = window.setInterval(() => {
     nowUnix.value = nowUnixSeconds();
@@ -1060,6 +1062,7 @@ function handleCreateReminder(): void {
   }
 
   persistTasks(upsertReminderTask(tasks.value, task));
+  void syncReminderTaskToCloud(task, false);
   if (task.scheduleMode === 'date-time') {
     store.showToast(
       `提醒已创建：${task.title}，触发时间 ${toLocalDateTimeText(task.triggerAtUnix)}（${formatRepeatWeekdaysText(task.repeatWeekdays)}）。`,
@@ -1105,6 +1108,10 @@ function cancelTask(taskId: string): void {
 
   persistTasks(nextTasks);
   void syncLoopingSoundLoop();
+  const cancelledTask = nextTasks.find((task) => task.id === taskId);
+  if (cancelledTask) {
+    void syncReminderTaskToCloud(cancelledTask, false);
+  }
   store.showToast('提醒已取消。', 'info');
 }
 
@@ -1216,6 +1223,61 @@ function resolvePushGithubContextOrThrow(): {
   };
 }
 
+function canSyncReminderToCloud(): boolean {
+  return Boolean(
+    effectiveReminderApiBaseUrl.value &&
+      store.state.githubToken.trim() &&
+      store.state.config.githubOwner.trim() &&
+      store.state.config.githubRepo.trim() &&
+      store.state.config.githubRecordsDir.trim() &&
+      store.state.deviceMeta.deviceId.trim(),
+  );
+}
+
+async function syncReminderTaskToCloud(task: ReminderTask, silent = true): Promise<void> {
+  if (!canSyncReminderToCloud()) {
+    if (!silent && pushStatus.value === 'enabled') {
+      store.showToast('提醒已仅保存到本地：后端或 GitHub 配置未完成。', 'info');
+    }
+    return;
+  }
+
+  try {
+    if (task.status === 'cancelled') {
+      await cancelReminderInCloud(
+        store.state.config,
+        resolvePushGithubContextOrThrow(),
+        store.state.deviceMeta.deviceId,
+        task.id,
+      );
+      return;
+    }
+
+    await upsertReminderToCloud(
+      store.state.config,
+      resolvePushGithubContextOrThrow(),
+      store.state.deviceMeta.deviceId,
+      task,
+    );
+  } catch (error) {
+    if (!silent) {
+      const message = error instanceof Error ? error.message : '提醒云端同步失败。';
+      store.showToast(message, 'error');
+    }
+  }
+}
+
+async function syncPendingReminderTasksToCloud(silent = true): Promise<void> {
+  if (!canSyncReminderToCloud()) {
+    return;
+  }
+
+  const candidates = tasks.value.filter((task) => task.status === 'pending');
+  for (const task of candidates) {
+    await syncReminderTaskToCloud(task, silent);
+  }
+}
+
 function resolveServiceWorkerBaseUrl(): string {
   return (import.meta.env.BASE_URL || '/').replace(/\/+$/, '/');
 }
@@ -1309,6 +1371,7 @@ async function enableLockscreenPushNotifications(): Promise<void> {
     pushSubscriptionId.value = result.subscriptionId;
     pushStatusMessage.value = `已启用并同步到 GitHub：${result.path}`;
     store.showToast('锁屏 Push 提醒已启用。', 'success');
+    void syncPendingReminderTasksToCloud();
   } catch (error) {
     pushStatus.value = 'error';
     pushStatusMessage.value = error instanceof Error ? error.message : '启用锁屏 Push 失败。';
@@ -2256,6 +2319,12 @@ function triggerDueReminders(): void {
   const withRepeatTasks = nextRepeatTasks.reduce((currentTasks, repeatTask) => upsertReminderTask(currentTasks, repeatTask), nextTasks);
   persistTasks(withRepeatTasks);
   void syncLoopingSoundLoop();
+  dueTasks.forEach((task) => {
+    void syncReminderTaskToCloud(task);
+  });
+  nextRepeatTasks.forEach((task) => {
+    void syncReminderTaskToCloud(task);
+  });
 
   dueTasks.forEach((task) => {
     try {

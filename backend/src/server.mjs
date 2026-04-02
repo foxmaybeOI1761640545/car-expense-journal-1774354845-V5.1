@@ -19,12 +19,30 @@ const MAX_GITHUB_PROXY_BODY_BYTES = clampInteger(
   32 * 1024 * 1024,
 );
 const MAX_PUSH_JSON_BODY_BYTES = clampInteger(process.env.MAX_PUSH_JSON_BODY_BYTES, 128 * 1024, 4 * 1024, 2 * 1024 * 1024);
+const MAX_REMINDER_JSON_BODY_BYTES = clampInteger(
+  process.env.MAX_REMINDER_JSON_BODY_BYTES,
+  128 * 1024,
+  4 * 1024,
+  2 * 1024 * 1024,
+);
 const PAT_WRAP_KEY_VERSION = (process.env.PAT_WRAP_KEY_VERSION || 'v1').trim() || 'v1';
 const PAT_WRAP_KEY = resolvePatWrapKey(process.env.PAT_WRAP_KEY_BASE64 || '');
 const PUSH_SCHEMA_VERSION = 1;
+const REMINDER_SCHEMA_VERSION = 1;
+const REMINDER_DELIVERY_SCHEMA_VERSION = 1;
 const VAPID_PUBLIC_KEY = normalizeNonEmptyString(process.env.VAPID_PUBLIC_KEY || '', 300);
 const VAPID_PRIVATE_KEY = normalizeNonEmptyString(process.env.VAPID_PRIVATE_KEY || '', 300);
 const VAPID_SUBJECT = normalizeNonEmptyString(process.env.VAPID_SUBJECT || '', 300);
+const INTERNAL_TICK_TOKEN = normalizeNonEmptyString(process.env.INTERNAL_TICK_TOKEN || '', 512);
+const TICK_GITHUB_TOKEN = normalizeNonEmptyString(process.env.TICK_GITHUB_TOKEN || '', 8192);
+const TICK_GITHUB_OWNER = normalizeNonEmptyString(process.env.TICK_GITHUB_OWNER || '', 120);
+const TICK_GITHUB_REPO = normalizeNonEmptyString(process.env.TICK_GITHUB_REPO || '', 120);
+const TICK_GITHUB_BRANCH = normalizeNonEmptyString(process.env.TICK_GITHUB_BRANCH || '', 160);
+const TICK_GITHUB_RECORDS_DIR = normalizeRepoPath(process.env.TICK_GITHUB_RECORDS_DIR || '');
+const TICK_MAX_ENTITY_FILES = clampInteger(process.env.TICK_MAX_ENTITY_FILES, 500, 10, 5000);
+const TICK_MAX_DUE_REMINDERS = clampInteger(process.env.TICK_MAX_DUE_REMINDERS, 50, 1, 1000);
+const TICK_DUE_LOOKBACK_SECONDS = clampInteger(process.env.TICK_DUE_LOOKBACK_SECONDS, 7 * 24 * 3600, 60, 365 * 24 * 3600);
+const TICK_PUSH_TTL_SECONDS = clampInteger(process.env.TICK_PUSH_TTL_SECONDS, 600, 60, 24 * 3600);
 const DEFAULT_CORS_ORIGIN_RULES = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -443,7 +461,7 @@ function parsePushGithubContext(body) {
   };
 }
 
-function parsePushSubscriptionFileContent(fileBody) {
+function parseGithubJsonFileContent(fileBody) {
   if (!fileBody || typeof fileBody !== 'object') {
     return null;
   }
@@ -465,10 +483,204 @@ function parsePushSubscriptionFileContent(fileBody) {
   }
 }
 
+function parsePushSubscriptionFileContent(fileBody) {
+  const parsed = parseGithubJsonFileContent(fileBody);
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+  return parsed;
+}
+
 function buildPushSubscriptionFilePath(recordsDir, deviceId, subscriptionId) {
   const safeDeviceId = normalizePathSegment(deviceId, 'device', 120);
   const safeSubscriptionId = normalizePathSegment(subscriptionId, 'subscription', 120);
   return `${recordsDir}/reminders/subscriptions/${safeDeviceId}/${safeSubscriptionId}.json`;
+}
+
+function normalizeReminderStatus(value) {
+  if (value === 'pending' || value === 'fired' || value === 'cancelled' || value === 'failed') {
+    return value;
+  }
+  return 'pending';
+}
+
+function normalizeReminderKind(value) {
+  if (value === 'custom' || value === 'custom-time' || value === 'parking' || value === 'pomodoro') {
+    return value;
+  }
+  return 'custom';
+}
+
+function normalizeReminderScheduleMode(value, kind) {
+  if (value === 'date-time' || value === 'countdown') {
+    return value;
+  }
+  return kind === 'custom-time' ? 'date-time' : 'countdown';
+}
+
+function sanitizeReminderRepeatWeekdays(raw) {
+  if (!Array.isArray(raw)) {
+    return undefined;
+  }
+
+  const unique = new Set();
+  for (const item of raw) {
+    const weekday = Math.floor(Number(item));
+    if (!Number.isFinite(weekday) || weekday < 1 || weekday > 7) {
+      continue;
+    }
+    unique.add(weekday);
+  }
+
+  if (unique.size === 0) {
+    return undefined;
+  }
+  return Array.from(unique).sort((a, b) => a - b);
+}
+
+function normalizeReminderEntityInput(raw, fallbackDeviceId = '') {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw;
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const id = normalizeNonEmptyString(value.id, 180);
+  if (!id) {
+    return null;
+  }
+
+  const kind = normalizeReminderKind(normalizeNonEmptyString(value.kind, 40));
+  const scheduleMode = normalizeReminderScheduleMode(normalizeNonEmptyString(value.scheduleMode, 40), kind);
+  const title = normalizeNonEmptyString(value.title, 120) || '提醒中心';
+  const note = normalizeNonEmptyString(value.note, 500) || undefined;
+  const status = normalizeReminderStatus(normalizeNonEmptyString(value.status, 30));
+  const triggerAtUnix = Math.floor(Number(value.triggerAtUnix));
+  if (!Number.isFinite(triggerAtUnix) || triggerAtUnix <= 0) {
+    return null;
+  }
+
+  const createdAtUnixRaw = Math.floor(Number(value.createdAtUnix));
+  const updatedAtUnixRaw = Math.floor(Number(value.updatedAtUnix));
+  const createdAtUnix = Number.isFinite(createdAtUnixRaw) && createdAtUnixRaw > 0 ? createdAtUnixRaw : nowUnix;
+  const updatedAtUnix = Number.isFinite(updatedAtUnixRaw) && updatedAtUnixRaw > 0 ? Math.max(updatedAtUnixRaw, createdAtUnix) : nowUnix;
+  const durationSecondsRaw = Math.floor(Number(value.durationSeconds));
+  const durationSeconds =
+    Number.isFinite(durationSecondsRaw) && durationSecondsRaw >= 0
+      ? durationSecondsRaw
+      : Math.max(0, triggerAtUnix - createdAtUnix);
+  const repeatWeekdays = sanitizeReminderRepeatWeekdays(value.repeatWeekdays);
+  const soundEnabled = value.soundEnabled !== false;
+  const notificationEnabled = value.notificationEnabled !== false;
+  const requiresAcknowledgement = Boolean(value.requiresAcknowledgement);
+  const firedAtUnixRaw = Math.floor(Number(value.firedAtUnix));
+  const acknowledgedAtUnixRaw = Math.floor(Number(value.acknowledgedAtUnix));
+  const cancelledAtUnixRaw = Math.floor(Number(value.cancelledAtUnix));
+  const failedAtUnixRaw = Math.floor(Number(value.failedAtUnix));
+  const deviceId = normalizeNonEmptyString(value.deviceId, 160) || normalizeNonEmptyString(fallbackDeviceId, 160);
+  if (!deviceId) {
+    return null;
+  }
+
+  return {
+    schemaVersion: REMINDER_SCHEMA_VERSION,
+    id,
+    deviceId,
+    kind,
+    title,
+    note,
+    durationSeconds,
+    triggerAtUnix,
+    scheduleMode,
+    repeatWeekdays,
+    status,
+    soundEnabled,
+    notificationEnabled,
+    requiresAcknowledgement,
+    createdAtUnix,
+    updatedAtUnix,
+    firedAtUnix: Number.isFinite(firedAtUnixRaw) ? firedAtUnixRaw : undefined,
+    acknowledgedAtUnix: Number.isFinite(acknowledgedAtUnixRaw) ? acknowledgedAtUnixRaw : undefined,
+    cancelledAtUnix: Number.isFinite(cancelledAtUnixRaw) ? cancelledAtUnixRaw : undefined,
+    failedAtUnix: Number.isFinite(failedAtUnixRaw) ? failedAtUnixRaw : undefined,
+    lastError: normalizeNonEmptyString(value.lastError, 500) || undefined,
+    lastTickAtUnix: Number.isFinite(Math.floor(Number(value.lastTickAtUnix))) ? Math.floor(Number(value.lastTickAtUnix)) : undefined,
+    retryCount: Number.isFinite(Math.floor(Number(value.retryCount))) ? Math.max(0, Math.floor(Number(value.retryCount))) : 0,
+    source: normalizeNonEmptyString(value.source, 80) || 'frontend',
+  };
+}
+
+function parseReminderEntityFileContent(fileBody) {
+  const parsed = parseGithubJsonFileContent(fileBody);
+  if (!parsed) {
+    return null;
+  }
+  return normalizeReminderEntityInput(parsed);
+}
+
+function parseReminderDeliveryFileContent(fileBody) {
+  const parsed = parseGithubJsonFileContent(fileBody);
+  if (!parsed || typeof parsed !== 'object') {
+    return null;
+  }
+  return parsed;
+}
+
+function normalizeStoredPushSubscriptionRecord(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const endpoint = normalizeSubscriptionEndpoint(raw.endpoint);
+  const keysRaw = raw.keys && typeof raw.keys === 'object' ? raw.keys : {};
+  const p256dh = normalizeSubscriptionKey(keysRaw.p256dh);
+  const auth = normalizeSubscriptionKey(keysRaw.auth);
+  if (!endpoint || !p256dh || !auth) {
+    return null;
+  }
+
+  const id = normalizeNonEmptyString(raw.id, 160) || makeReminderPushSubscriptionId(endpoint);
+  const deviceId = normalizeNonEmptyString(raw.deviceId, 160);
+  const enabled = raw.enabled !== false;
+  const updatedAtUnix = Math.floor(Number(raw.updatedAtUnix));
+  const createdAtUnix = Math.floor(Number(raw.createdAtUnix));
+
+  return {
+    schemaVersion: PUSH_SCHEMA_VERSION,
+    id,
+    deviceId,
+    endpoint,
+    expirationTime:
+      raw.expirationTime === null || raw.expirationTime === undefined
+        ? null
+        : Number.isFinite(Number(raw.expirationTime))
+          ? Math.floor(Number(raw.expirationTime))
+          : null,
+    keys: {
+      p256dh,
+      auth,
+    },
+    enabled,
+    createdAtUnix: Number.isFinite(createdAtUnix) && createdAtUnix > 0 ? createdAtUnix : undefined,
+    updatedAtUnix: Number.isFinite(updatedAtUnix) && updatedAtUnix > 0 ? updatedAtUnix : undefined,
+    removedAtUnix: Number.isFinite(Math.floor(Number(raw.removedAtUnix))) ? Math.floor(Number(raw.removedAtUnix)) : undefined,
+    lastError: normalizeNonEmptyString(raw.lastError, 500) || undefined,
+  };
+}
+
+function buildReminderEntityFilePath(recordsDir, reminderId) {
+  const safeReminderId = normalizePathSegment(reminderId, 'reminder', 180);
+  return `${recordsDir}/reminders/entities/${safeReminderId}.json`;
+}
+
+function buildReminderSubscriptionsDirectoryPath(recordsDir, deviceId) {
+  const safeDeviceId = normalizePathSegment(deviceId, 'device', 120);
+  return `${recordsDir}/reminders/subscriptions/${safeDeviceId}`;
+}
+
+function buildReminderDeliveryFilePath(recordsDir, reminderId) {
+  const safeReminderId = normalizePathSegment(reminderId, 'reminder', 180);
+  return `${recordsDir}/reminders/deliveries/${safeReminderId}/push.json`;
 }
 
 function encodeContentPath(path) {
@@ -609,6 +821,32 @@ async function fetchGithubFileBodyByPat({ pat, owner, repo, branch, path, allowN
   return response.body;
 }
 
+async function listGithubDirectoryByPat({ pat, owner, repo, branch, path, allowNotFound = false }) {
+  const response = await proxyGithubContentsRequest({
+    method: 'GET',
+    pat,
+    owner,
+    repo,
+    branch,
+    path,
+  });
+
+  if (response.status === 404 && allowNotFound) {
+    return [];
+  }
+
+  if (response.status !== 200) {
+    const fallback = `GitHub LIST failed (HTTP ${response.status}).`;
+    throw new Error(extractGithubErrorMessage(response.body, fallback));
+  }
+
+  if (!Array.isArray(response.body)) {
+    throw new Error('GitHub LIST returned invalid payload.');
+  }
+
+  return response.body;
+}
+
 async function putGithubFileByPat({ pat, owner, repo, branch, path, message, content, sha }) {
   const payload = {
     message,
@@ -703,6 +941,202 @@ function validatePushTestSendBody(body) {
       triggeredAtUnix: Math.floor(Date.now() / 1000),
     },
   };
+}
+
+function validateReminderUpsertBody(body) {
+  const github = parsePushGithubContext(body);
+  const deviceId = normalizeNonEmptyString(body?.deviceId, 160);
+  const reminder = normalizeReminderEntityInput(body?.reminder, deviceId);
+
+  if (!github || !deviceId || !reminder) {
+    return {
+      ok: false,
+      message: 'Invalid reminder upsert request.',
+    };
+  }
+
+  return {
+    ok: true,
+    github,
+    deviceId,
+    reminder: {
+      ...reminder,
+      deviceId,
+    },
+  };
+}
+
+function validateReminderCancelBody(body, reminderIdFromPath = '') {
+  const github = parsePushGithubContext(body);
+  const deviceId = normalizeNonEmptyString(body?.deviceId, 160);
+  const reminderId = normalizeNonEmptyString(reminderIdFromPath || body?.reminderId, 180);
+
+  if (!github || !deviceId || !reminderId) {
+    return {
+      ok: false,
+      message: 'Invalid reminder cancel request.',
+    };
+  }
+
+  return {
+    ok: true,
+    github,
+    deviceId,
+    reminderId,
+  };
+}
+
+function resolveTickGithubContextFromUrl(url) {
+  const tokenCandidate =
+    normalizeNonEmptyString(url.searchParams.get('sealedToken') || '', 8192) ||
+    normalizeNonEmptyString(url.searchParams.get('githubToken') || '', 8192) ||
+    TICK_GITHUB_TOKEN;
+  const owner = normalizeNonEmptyString(url.searchParams.get('owner') || '', 120) || TICK_GITHUB_OWNER;
+  const repo = normalizeNonEmptyString(url.searchParams.get('repo') || '', 120) || TICK_GITHUB_REPO;
+  const branch = normalizeNonEmptyString(url.searchParams.get('branch') || '', 160) || TICK_GITHUB_BRANCH;
+  const recordsDir = normalizeRepoPath(url.searchParams.get('recordsDir') || '') || TICK_GITHUB_RECORDS_DIR;
+
+  if (!tokenCandidate || !owner || !repo || !recordsDir) {
+    return null;
+  }
+
+  return {
+    tokenCandidate,
+    owner,
+    repo,
+    branch,
+    recordsDir,
+  };
+}
+
+function buildReminderPushPayload(reminder, nowUnix) {
+  const title = normalizeNonEmptyString(reminder.title, 120) || '提醒中心';
+  const body = normalizeNonEmptyString(reminder.note, 500) || '提醒已到点，请打开提醒中心确认。';
+  return {
+    title,
+    body,
+    tag: `reminder-${reminder.id}`,
+    url: '/#/reminder',
+    source: 'internal-tick',
+    reminderId: reminder.id,
+    deviceId: reminder.deviceId,
+    triggerAtUnix: reminder.triggerAtUnix,
+    triggeredAtUnix: nowUnix,
+  };
+}
+
+function shouldDisableSubscriptionByError(error) {
+  const statusCode = Number(error?.statusCode);
+  return statusCode === 404 || statusCode === 410 || statusCode === 403;
+}
+
+async function loadEnabledSubscriptionsForDevice({ pat, owner, repo, branch, recordsDir, deviceId }) {
+  const directoryPath = buildReminderSubscriptionsDirectoryPath(recordsDir, deviceId);
+  const entries = await listGithubDirectoryByPat({
+    pat,
+    owner,
+    repo,
+    branch,
+    path: directoryPath,
+    allowNotFound: true,
+  });
+
+  const fileEntries = entries.filter(
+    (item) => item && item.type === 'file' && typeof item.path === 'string' && item.path.endsWith('.json'),
+  );
+
+  const results = [];
+  for (const entry of fileEntries) {
+    const fileBody = await fetchGithubFileBodyByPat({
+      pat,
+      owner,
+      repo,
+      branch,
+      path: entry.path,
+      allowNotFound: true,
+    });
+    if (!fileBody) {
+      continue;
+    }
+
+    const parsed = parsePushSubscriptionFileContent(fileBody);
+    const normalized = normalizeStoredPushSubscriptionRecord(parsed);
+    if (!normalized || !normalized.enabled) {
+      continue;
+    }
+
+    results.push({
+      path: entry.path,
+      sha: typeof fileBody.sha === 'string' ? fileBody.sha : typeof entry.sha === 'string' ? entry.sha : undefined,
+      subscription: normalized,
+    });
+  }
+
+  return results;
+}
+
+async function disableStoredSubscription({
+  pat,
+  owner,
+  repo,
+  branch,
+  path,
+  sha,
+  existingSubscription,
+  nowUnix,
+  reason,
+}) {
+  const nextPayload = {
+    ...existingSubscription,
+    schemaVersion: PUSH_SCHEMA_VERSION,
+    enabled: false,
+    removedAtUnix: nowUnix,
+    updatedAtUnix: nowUnix,
+    lastError: normalizeNonEmptyString(reason, 500) || 'Push subscription disabled by internal tick.',
+  };
+
+  await putGithubFileByPat({
+    pat,
+    owner,
+    repo,
+    branch,
+    path,
+    message: `chore(reminder-push): disable stale subscription ${existingSubscription.id}`,
+    content: toBase64Utf8(JSON.stringify(nextPayload, null, 2)),
+    sha,
+  });
+}
+
+async function upsertReminderEntityByPat({
+  pat,
+  owner,
+  repo,
+  branch,
+  path,
+  sha,
+  reminder,
+  commitMessage,
+}) {
+  await putGithubFileByPat({
+    pat,
+    owner,
+    repo,
+    branch,
+    path,
+    message: commitMessage,
+    content: toBase64Utf8(JSON.stringify(reminder, null, 2)),
+    sha,
+  });
+}
+
+function normalizeErrorMessage(error, fallback = 'Unknown error.') {
+  if (error instanceof Error) {
+    const message = normalizeNonEmptyString(error.message, 500);
+    if (message) {
+      return message;
+    }
+  }
+  return fallback;
 }
 
 function resolveGithubPatForRequest(tokenCandidate) {
@@ -985,6 +1419,581 @@ async function handlePushTestSendRequest(req, res, origin) {
   }
 }
 
+async function handleReminderUpsertRequest(req, res, origin) {
+  if (req.method !== 'POST') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req, MAX_REMINDER_JSON_BODY_BYTES);
+    const validated = validateReminderUpsertBody(body);
+    if (!validated.ok) {
+      writeJson(res, 400, { ok: false, message: validated.message }, origin);
+      return;
+    }
+
+    const pat = resolveGithubPatForRequest(validated.github.tokenCandidate);
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const path = buildReminderEntityFilePath(validated.github.recordsDir, validated.reminder.id);
+    const existingFile = await fetchGithubFileBodyByPat({
+      pat,
+      owner: validated.github.owner,
+      repo: validated.github.repo,
+      branch: validated.github.branch,
+      path,
+      allowNotFound: true,
+    });
+    const existingReminder = parseReminderEntityFileContent(existingFile);
+    const nextReminder = {
+      ...(existingReminder && typeof existingReminder === 'object' ? existingReminder : {}),
+      ...validated.reminder,
+      schemaVersion: REMINDER_SCHEMA_VERSION,
+      id: validated.reminder.id,
+      deviceId: validated.deviceId,
+      createdAtUnix:
+        existingReminder && Number.isFinite(Number(existingReminder.createdAtUnix))
+          ? Math.floor(Number(existingReminder.createdAtUnix))
+          : validated.reminder.createdAtUnix,
+      updatedAtUnix: nowUnix,
+      source: 'frontend',
+      lastTickAtUnix: Number.isFinite(Number(existingReminder?.lastTickAtUnix))
+        ? Math.floor(Number(existingReminder.lastTickAtUnix))
+        : undefined,
+      retryCount: Number.isFinite(Number(existingReminder?.retryCount)) ? Math.max(0, Math.floor(Number(existingReminder.retryCount))) : 0,
+      lastError: undefined,
+    };
+
+    if (nextReminder.status === 'fired' && !Number.isFinite(Number(nextReminder.firedAtUnix))) {
+      nextReminder.firedAtUnix = nowUnix;
+    }
+    if (nextReminder.status === 'cancelled' && !Number.isFinite(Number(nextReminder.cancelledAtUnix))) {
+      nextReminder.cancelledAtUnix = nowUnix;
+    }
+
+    await upsertReminderEntityByPat({
+      pat,
+      owner: validated.github.owner,
+      repo: validated.github.repo,
+      branch: validated.github.branch,
+      path,
+      sha: typeof existingFile?.sha === 'string' ? existingFile.sha : undefined,
+      reminder: nextReminder,
+      commitMessage: `chore(reminder-push): upsert reminder ${validated.reminder.id}`,
+    });
+
+    writeJson(
+      res,
+      200,
+      {
+        ok: true,
+        reminderId: validated.reminder.id,
+        path,
+        status: nextReminder.status,
+        triggerAtUnix: nextReminder.triggerAtUnix,
+        updatedAtUnix: nowUnix,
+      },
+      origin,
+    );
+  } catch (error) {
+    if (error && error.code === 'BODY_TOO_LARGE') {
+      writeJson(res, 413, { ok: false, message: 'JSON body too large.' }, origin);
+      return;
+    }
+    if (error && error.code === 'INVALID_JSON') {
+      writeJson(res, 400, { ok: false, message: 'Invalid JSON.' }, origin);
+      return;
+    }
+    writeJson(
+      res,
+      502,
+      {
+        ok: false,
+        message: normalizeErrorMessage(error, 'Failed to upsert reminder.'),
+      },
+      origin,
+    );
+  }
+}
+
+async function handleReminderCancelRequest(req, res, origin, reminderIdFromPath = '') {
+  if (req.method !== 'PATCH' && req.method !== 'POST') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req, MAX_REMINDER_JSON_BODY_BYTES);
+    const validated = validateReminderCancelBody(body, reminderIdFromPath);
+    if (!validated.ok) {
+      writeJson(res, 400, { ok: false, message: validated.message }, origin);
+      return;
+    }
+
+    const pat = resolveGithubPatForRequest(validated.github.tokenCandidate);
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const path = buildReminderEntityFilePath(validated.github.recordsDir, validated.reminderId);
+    const existingFile = await fetchGithubFileBodyByPat({
+      pat,
+      owner: validated.github.owner,
+      repo: validated.github.repo,
+      branch: validated.github.branch,
+      path,
+      allowNotFound: true,
+    });
+    const existingReminder = parseReminderEntityFileContent(existingFile);
+    const nextReminder = {
+      ...(existingReminder && typeof existingReminder === 'object'
+        ? existingReminder
+        : {
+            schemaVersion: REMINDER_SCHEMA_VERSION,
+            id: validated.reminderId,
+            deviceId: validated.deviceId,
+            kind: 'custom',
+            title: '已取消提醒',
+            note: undefined,
+            durationSeconds: 0,
+            triggerAtUnix: nowUnix,
+            scheduleMode: 'countdown',
+            status: 'pending',
+            soundEnabled: true,
+            notificationEnabled: true,
+            requiresAcknowledgement: false,
+            createdAtUnix: nowUnix,
+            retryCount: 0,
+            source: 'frontend',
+          }),
+      schemaVersion: REMINDER_SCHEMA_VERSION,
+      id: validated.reminderId,
+      deviceId: validated.deviceId,
+      status: 'cancelled',
+      cancelledAtUnix: nowUnix,
+      updatedAtUnix: nowUnix,
+      source: 'frontend-cancel',
+      lastError: undefined,
+      lastTickAtUnix: Number.isFinite(Number(existingReminder?.lastTickAtUnix))
+        ? Math.floor(Number(existingReminder.lastTickAtUnix))
+        : undefined,
+      retryCount: Number.isFinite(Number(existingReminder?.retryCount)) ? Math.max(0, Math.floor(Number(existingReminder.retryCount))) : 0,
+    };
+
+    await upsertReminderEntityByPat({
+      pat,
+      owner: validated.github.owner,
+      repo: validated.github.repo,
+      branch: validated.github.branch,
+      path,
+      sha: typeof existingFile?.sha === 'string' ? existingFile.sha : undefined,
+      reminder: nextReminder,
+      commitMessage: `chore(reminder-push): cancel reminder ${validated.reminderId}`,
+    });
+
+    writeJson(
+      res,
+      200,
+      {
+        ok: true,
+        reminderId: validated.reminderId,
+        path,
+        status: 'cancelled',
+        updatedAtUnix: nowUnix,
+      },
+      origin,
+    );
+  } catch (error) {
+    if (error && error.code === 'BODY_TOO_LARGE') {
+      writeJson(res, 413, { ok: false, message: 'JSON body too large.' }, origin);
+      return;
+    }
+    if (error && error.code === 'INVALID_JSON') {
+      writeJson(res, 400, { ok: false, message: 'Invalid JSON.' }, origin);
+      return;
+    }
+    writeJson(
+      res,
+      502,
+      {
+        ok: false,
+        message: normalizeErrorMessage(error, 'Failed to cancel reminder.'),
+      },
+      origin,
+    );
+  }
+}
+
+async function handleInternalTickRequest(req, res, origin, url) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  if (!INTERNAL_TICK_TOKEN) {
+    writeJson(res, 503, { ok: false, message: 'INTERNAL_TICK_TOKEN is not configured.' }, origin);
+    return;
+  }
+
+  const token = normalizeNonEmptyString(url.searchParams.get('token') || '', 512);
+  if (!token || token !== INTERNAL_TICK_TOKEN) {
+    writeJson(res, 401, { ok: false, message: 'Invalid tick token.' }, origin);
+    return;
+  }
+
+  if (req.method === 'HEAD') {
+    writeNoContent(res, origin, 200);
+    return;
+  }
+
+  if (!pushConfigured) {
+    writeJson(res, 503, { ok: false, message: 'Push VAPID is not configured.' }, origin);
+    return;
+  }
+
+  const tickGithub = resolveTickGithubContextFromUrl(url);
+  if (!tickGithub) {
+    writeJson(res, 400, { ok: false, message: 'Tick GitHub context is incomplete.' }, origin);
+    return;
+  }
+
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const summary = {
+    nowUnix,
+    entityFiles: 0,
+    scannedEntities: 0,
+    invalidEntities: 0,
+    nonPendingEntities: 0,
+    futureEntities: 0,
+    staleEntities: 0,
+    disabledNotificationEntities: 0,
+    dueCandidates: 0,
+    processed: 0,
+    delivered: 0,
+    alreadyDelivered: 0,
+    failedDeliveries: 0,
+    noSubscription: 0,
+    updatedReminders: 0,
+    updateFailures: 0,
+    disabledSubscriptions: 0,
+    errors: [],
+  };
+
+  try {
+    const pat = resolveGithubPatForRequest(tickGithub.tokenCandidate);
+    const entitiesDirectoryPath = `${tickGithub.recordsDir}/reminders/entities`;
+    const entityEntries = await listGithubDirectoryByPat({
+      pat,
+      owner: tickGithub.owner,
+      repo: tickGithub.repo,
+      branch: tickGithub.branch,
+      path: entitiesDirectoryPath,
+      allowNotFound: true,
+    });
+    const entityFiles = entityEntries.filter(
+      (item) => item && item.type === 'file' && typeof item.path === 'string' && item.path.endsWith('.json'),
+    );
+    summary.entityFiles = entityFiles.length;
+
+    const dueCandidates = [];
+    for (const entry of entityFiles.slice(0, TICK_MAX_ENTITY_FILES)) {
+      const fileBody = await fetchGithubFileBodyByPat({
+        pat,
+        owner: tickGithub.owner,
+        repo: tickGithub.repo,
+        branch: tickGithub.branch,
+        path: entry.path,
+        allowNotFound: true,
+      });
+      if (!fileBody) {
+        continue;
+      }
+
+      summary.scannedEntities += 1;
+      const reminder = parseReminderEntityFileContent(fileBody);
+      if (!reminder) {
+        summary.invalidEntities += 1;
+        continue;
+      }
+      if (reminder.status !== 'pending') {
+        summary.nonPendingEntities += 1;
+        continue;
+      }
+      if (!reminder.notificationEnabled) {
+        summary.disabledNotificationEntities += 1;
+        continue;
+      }
+      if (reminder.triggerAtUnix > nowUnix) {
+        summary.futureEntities += 1;
+        continue;
+      }
+      if (reminder.triggerAtUnix < nowUnix - TICK_DUE_LOOKBACK_SECONDS) {
+        summary.staleEntities += 1;
+        continue;
+      }
+
+      dueCandidates.push({
+        path: entry.path,
+        sha: typeof fileBody.sha === 'string' ? fileBody.sha : typeof entry.sha === 'string' ? entry.sha : undefined,
+        reminder,
+      });
+    }
+
+    dueCandidates.sort((a, b) => a.reminder.triggerAtUnix - b.reminder.triggerAtUnix);
+    const dueReminders = dueCandidates.slice(0, TICK_MAX_DUE_REMINDERS);
+    summary.dueCandidates = dueReminders.length;
+
+    for (const item of dueReminders) {
+      summary.processed += 1;
+
+      const deliveryPath = buildReminderDeliveryFilePath(tickGithub.recordsDir, item.reminder.id);
+      const existingDeliveryFile = await fetchGithubFileBodyByPat({
+        pat,
+        owner: tickGithub.owner,
+        repo: tickGithub.repo,
+        branch: tickGithub.branch,
+        path: deliveryPath,
+        allowNotFound: true,
+      });
+      if (existingDeliveryFile && parseReminderDeliveryFileContent(existingDeliveryFile)) {
+        summary.alreadyDelivered += 1;
+        try {
+          await upsertReminderEntityByPat({
+            pat,
+            owner: tickGithub.owner,
+            repo: tickGithub.repo,
+            branch: tickGithub.branch,
+            path: item.path,
+            sha: item.sha,
+            reminder: {
+              ...item.reminder,
+              schemaVersion: REMINDER_SCHEMA_VERSION,
+              status: 'fired',
+              firedAtUnix: Number.isFinite(Number(item.reminder.firedAtUnix)) ? Math.floor(Number(item.reminder.firedAtUnix)) : nowUnix,
+              updatedAtUnix: nowUnix,
+              lastTickAtUnix: nowUnix,
+              source: 'internal-tick',
+            },
+            commitMessage: `chore(reminder-push): mark delivered reminder ${item.reminder.id}`,
+          });
+          summary.updatedReminders += 1;
+        } catch (error) {
+          summary.updateFailures += 1;
+          summary.errors.push(`update-delivered:${item.reminder.id}:${normalizeErrorMessage(error)}`);
+        }
+        continue;
+      }
+
+      const subscriptions = await loadEnabledSubscriptionsForDevice({
+        pat,
+        owner: tickGithub.owner,
+        repo: tickGithub.repo,
+        branch: tickGithub.branch,
+        recordsDir: tickGithub.recordsDir,
+        deviceId: item.reminder.deviceId,
+      });
+      if (subscriptions.length === 0) {
+        summary.noSubscription += 1;
+        try {
+          await upsertReminderEntityByPat({
+            pat,
+            owner: tickGithub.owner,
+            repo: tickGithub.repo,
+            branch: tickGithub.branch,
+            path: item.path,
+            sha: item.sha,
+            reminder: {
+              ...item.reminder,
+              schemaVersion: REMINDER_SCHEMA_VERSION,
+              status: 'failed',
+              failedAtUnix: nowUnix,
+              updatedAtUnix: nowUnix,
+              lastTickAtUnix: nowUnix,
+              lastError: 'No enabled push subscriptions for this device.',
+              retryCount: Math.max(0, Number(item.reminder.retryCount) || 0) + 1,
+              source: 'internal-tick',
+            },
+            commitMessage: `chore(reminder-push): no subscription for reminder ${item.reminder.id}`,
+          });
+          summary.updatedReminders += 1;
+        } catch (error) {
+          summary.updateFailures += 1;
+          summary.errors.push(`update-no-subscription:${item.reminder.id}:${normalizeErrorMessage(error)}`);
+        }
+        continue;
+      }
+
+      const payload = buildReminderPushPayload(item.reminder, nowUnix);
+      let successCount = 0;
+      let failedCount = 0;
+      let firstErrorMessage = '';
+      const statusCodes = [];
+      const failures = [];
+
+      for (const subscriptionEntry of subscriptions) {
+        try {
+          const sendResult = await webpush.sendNotification(
+            {
+              endpoint: subscriptionEntry.subscription.endpoint,
+              expirationTime: subscriptionEntry.subscription.expirationTime,
+              keys: {
+                p256dh: subscriptionEntry.subscription.keys.p256dh,
+                auth: subscriptionEntry.subscription.keys.auth,
+              },
+            },
+            JSON.stringify(payload),
+            {
+              TTL: TICK_PUSH_TTL_SECONDS,
+              urgency: 'high',
+            },
+          );
+          successCount += 1;
+          statusCodes.push(Number(sendResult?.statusCode) || 200);
+        } catch (error) {
+          failedCount += 1;
+          const errorMessage = normalizeErrorMessage(error, 'Push send failed.');
+          if (!firstErrorMessage) {
+            firstErrorMessage = errorMessage;
+          }
+          failures.push({
+            subscriptionId: subscriptionEntry.subscription.id,
+            message: errorMessage,
+            statusCode: Number(error?.statusCode) || undefined,
+          });
+
+          if (shouldDisableSubscriptionByError(error)) {
+            try {
+              await disableStoredSubscription({
+                pat,
+                owner: tickGithub.owner,
+                repo: tickGithub.repo,
+                branch: tickGithub.branch,
+                path: subscriptionEntry.path,
+                sha: subscriptionEntry.sha,
+                existingSubscription: subscriptionEntry.subscription,
+                nowUnix,
+                reason: errorMessage,
+              });
+              summary.disabledSubscriptions += 1;
+            } catch (disableError) {
+              summary.errors.push(
+                `disable-subscription:${subscriptionEntry.subscription.id}:${normalizeErrorMessage(disableError)}`,
+              );
+            }
+          }
+        }
+      }
+
+      if (successCount > 0) {
+        try {
+          const existingDeliverySha = typeof existingDeliveryFile?.sha === 'string' ? existingDeliveryFile.sha : undefined;
+          await putGithubFileByPat({
+            pat,
+            owner: tickGithub.owner,
+            repo: tickGithub.repo,
+            branch: tickGithub.branch,
+            path: deliveryPath,
+            message: `chore(reminder-push): delivery ${item.reminder.id}`,
+            content: toBase64Utf8(
+              JSON.stringify(
+                {
+                  schemaVersion: REMINDER_DELIVERY_SCHEMA_VERSION,
+                  reminderId: item.reminder.id,
+                  deviceId: item.reminder.deviceId,
+                  channel: 'push',
+                  sentAtUnix: nowUnix,
+                  attemptedSubscriptions: subscriptions.length,
+                  successSubscriptions: successCount,
+                  failedSubscriptions: failedCount,
+                  statusCodes,
+                  failures,
+                },
+                null,
+                2,
+              ),
+            ),
+            sha: existingDeliverySha,
+          });
+        } catch (error) {
+          summary.errors.push(`write-delivery:${item.reminder.id}:${normalizeErrorMessage(error)}`);
+        }
+
+        try {
+          await upsertReminderEntityByPat({
+            pat,
+            owner: tickGithub.owner,
+            repo: tickGithub.repo,
+            branch: tickGithub.branch,
+            path: item.path,
+            sha: item.sha,
+            reminder: {
+              ...item.reminder,
+              schemaVersion: REMINDER_SCHEMA_VERSION,
+              status: 'fired',
+              firedAtUnix: nowUnix,
+              updatedAtUnix: nowUnix,
+              lastTickAtUnix: nowUnix,
+              lastError: undefined,
+              source: 'internal-tick',
+            },
+            commitMessage: `chore(reminder-push): fire reminder ${item.reminder.id}`,
+          });
+          summary.updatedReminders += 1;
+          summary.delivered += 1;
+        } catch (error) {
+          summary.updateFailures += 1;
+          summary.errors.push(`update-fired:${item.reminder.id}:${normalizeErrorMessage(error)}`);
+        }
+      } else {
+        summary.failedDeliveries += 1;
+        try {
+          await upsertReminderEntityByPat({
+            pat,
+            owner: tickGithub.owner,
+            repo: tickGithub.repo,
+            branch: tickGithub.branch,
+            path: item.path,
+            sha: item.sha,
+            reminder: {
+              ...item.reminder,
+              schemaVersion: REMINDER_SCHEMA_VERSION,
+              status: 'pending',
+              updatedAtUnix: nowUnix,
+              lastTickAtUnix: nowUnix,
+              lastError: firstErrorMessage || 'Push delivery failed.',
+              retryCount: Math.max(0, Number(item.reminder.retryCount) || 0) + 1,
+              source: 'internal-tick',
+            },
+            commitMessage: `chore(reminder-push): retry reminder ${item.reminder.id}`,
+          });
+          summary.updatedReminders += 1;
+        } catch (error) {
+          summary.updateFailures += 1;
+          summary.errors.push(`update-retry:${item.reminder.id}:${normalizeErrorMessage(error)}`);
+        }
+      }
+    }
+
+    writeJson(
+      res,
+      200,
+      {
+        ok: true,
+        ...summary,
+      },
+      origin,
+    );
+  } catch (error) {
+    writeJson(
+      res,
+      502,
+      {
+        ok: false,
+        message: normalizeErrorMessage(error, 'Internal tick failed.'),
+        ...summary,
+      },
+      origin,
+    );
+  }
+}
+
 function validateSealRequestBody(body) {
   const pat = normalizeNonEmptyString(body?.pat, 2048);
   if (!pat) {
@@ -1164,10 +2173,11 @@ const server = http.createServer((req, res) => {
   }
 
   let pathname = '/';
+  let requestUrl = null;
 
   try {
-    const url = new URL(req.url, `http://${host}`);
-    pathname = url.pathname;
+    requestUrl = new URL(req.url, `http://${host}`);
+    pathname = requestUrl.pathname;
   } catch {
     writeJson(res, 400, { ok: false, message: 'Malformed URL.' }, origin);
     return;
@@ -1241,6 +2251,29 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (pathname === '/api/reminders' || pathname === '/api/reminders/upsert') {
+    void handleReminderUpsertRequest(req, res, origin);
+    return;
+  }
+
+  if (pathname === '/internal/tick') {
+    void handleInternalTickRequest(req, res, origin, requestUrl);
+    return;
+  }
+
+  const reminderCancelMatch = pathname.match(/^\/api\/reminders\/([^/]+)\/cancel$/);
+  if (reminderCancelMatch) {
+    let reminderId = '';
+    try {
+      reminderId = decodeURIComponent(reminderCancelMatch[1]);
+    } catch {
+      writeJson(res, 400, { ok: false, message: 'Invalid reminder id.' }, origin);
+      return;
+    }
+    void handleReminderCancelRequest(req, res, origin, reminderId);
+    return;
+  }
+
   if (pathname === '/api/github/contents/get') {
     void handleGithubContentsProxyRequest(req, res, origin, 'get');
     return;
@@ -1300,6 +2333,12 @@ async function startServer() {
       console.log(`[${SERVICE_NAME}] cors origins: ${CORS_ORIGINS.join(', ')}`);
       console.log(`[${SERVICE_NAME}] pat sealing: ${PAT_WRAP_KEY ? `enabled (${PAT_WRAP_KEY_VERSION})` : 'disabled'}`);
       console.log(`[${SERVICE_NAME}] push vapid: ${pushConfigured ? 'enabled' : 'disabled'}`);
+      console.log(`[${SERVICE_NAME}] internal tick token: ${INTERNAL_TICK_TOKEN ? 'configured' : 'missing'}`);
+      console.log(
+        `[${SERVICE_NAME}] internal tick github defaults: ${
+          TICK_GITHUB_TOKEN && TICK_GITHUB_OWNER && TICK_GITHUB_REPO && TICK_GITHUB_RECORDS_DIR ? 'configured' : 'missing'
+        }`,
+      );
       if (fallbackUsed) {
         console.warn(`[${SERVICE_NAME}] requested port ${REQUESTED_PORT} is busy, fallback to ${port}`);
       }
