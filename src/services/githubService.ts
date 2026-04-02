@@ -1,4 +1,5 @@
 import type { AppConfig } from '../types/config';
+import type { PomodoroStageSettings } from '../types/pomodoro';
 import type { AvatarStyle } from '../types/profile';
 import type { ReminderRingtoneSourceMode, ReminderSynthPatternConfig } from '../types/reminder';
 import type { AppRecord, RecordTombstone, RecordType } from '../types/records';
@@ -64,6 +65,8 @@ const USER_PROFILE_FILE = 'profile.json';
 const REMINDER_AUDIO_DIR = 'reminder-audio';
 const REMINDER_AUDIO_UPLOADS_DIR = 'uploads';
 const REMINDER_AUDIO_PATH_CONFIG_FILE = 'ringtone-paths.json';
+const POMODORO_STAGE_SETTINGS_DIR = 'pomodoro-stage-settings';
+const POMODORO_STAGE_SETTINGS_FILE_PREFIX = 'pomodoro-stage-settings';
 
 export interface GithubUserProfilePayload {
   schemaVersion?: number;
@@ -146,6 +149,29 @@ export interface SyncReminderRingtonePathConfigToGithubResult {
   updatedAtUnix: number;
 }
 
+export interface GithubPomodoroStageSettings extends PomodoroStageSettings {
+  schemaVersion: number;
+  deviceId: string;
+  inUse: boolean;
+}
+
+export interface SubmitPomodoroStageSettingsToGithubInput extends PomodoroStageSettings {
+  deviceId: string;
+  inUse?: boolean;
+}
+
+export interface SubmitPomodoroStageSettingsToGithubResult {
+  path: string;
+  sha?: string;
+  updatedAtUnix: number;
+}
+
+export interface FetchedPomodoroStageSettingsFromGithub {
+  path: string;
+  fileTimestampUnix: number;
+  settings: GithubPomodoroStageSettings;
+}
+
 function toBase64Utf8(value: string): string {
   const bytes = new TextEncoder().encode(value);
   const chunkSize = 0x8000;
@@ -180,6 +206,19 @@ function isSealedGithubToken(token: string): boolean {
 function normalizeDeviceId(deviceId?: string): string | undefined {
   const value = deviceId?.trim();
   return value ? value : undefined;
+}
+
+function normalizeUnixSeconds(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const rounded = Math.floor(parsed);
+  if (rounded < 0) {
+    return 0;
+  }
+  return rounded;
 }
 
 function encodeContentPath(path: string): string {
@@ -595,6 +634,86 @@ function normalizeReminderRingtonePathConfig(raw: unknown): GithubReminderRingto
   };
 }
 
+function normalizePomodoroStageSettingNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const rounded = Math.floor(parsed);
+  if (rounded < min) {
+    return min;
+  }
+  if (rounded > max) {
+    return max;
+  }
+  return rounded;
+}
+
+function normalizePomodoroStageSettingsPayload(raw: unknown): GithubPomodoroStageSettings | null {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw as Partial<GithubPomodoroStageSettings>;
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const deviceId = normalizeDeviceId(value.deviceId);
+  if (!deviceId) {
+    return null;
+  }
+
+  return {
+    schemaVersion: Number.isFinite(value.schemaVersion) ? Math.max(1, Math.floor(Number(value.schemaVersion))) : 1,
+    deviceId,
+    inUse: value.inUse !== false,
+    workMinutes: normalizePomodoroStageSettingNumber(value.workMinutes, 1, 180, 25),
+    shortBreakMinutes: normalizePomodoroStageSettingNumber(value.shortBreakMinutes, 1, 60, 5),
+    longBreakMinutes: normalizePomodoroStageSettingNumber(value.longBreakMinutes, 1, 90, 15),
+    longBreakEvery: normalizePomodoroStageSettingNumber(value.longBreakEvery, 1, 12, 4),
+    updatedAtUnix: normalizeUnixSeconds(value.updatedAtUnix, nowUnix),
+  };
+}
+
+function sanitizePomodoroStageSettingsFileSegment(value: string): string {
+  const sanitized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+
+  return sanitized || 'device';
+}
+
+function parsePomodoroStageSettingsTimestampFromPath(path: string): number | null {
+  const pattern = new RegExp(`${POMODORO_STAGE_SETTINGS_FILE_PREFIX}-(\\d{9,})-[^/]+\\.json$`, 'i');
+  const matched = pattern.exec(path);
+  if (!matched) {
+    return null;
+  }
+
+  const timestamp = Number(matched[1]);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+
+  return Math.floor(timestamp);
+}
+
+function resolvePomodoroStageSettingsPriority(settings: GithubPomodoroStageSettings, currentDeviceId?: string): number {
+  if (currentDeviceId && settings.deviceId === currentDeviceId && settings.inUse) {
+    return 4;
+  }
+  if (currentDeviceId && settings.deviceId === currentDeviceId) {
+    return 3;
+  }
+  if (settings.inUse) {
+    return 2;
+  }
+  return 1;
+}
+
 function normalizeRecordPayload(value: unknown): unknown[] {
   if (Array.isArray(value)) {
     return value;
@@ -804,6 +923,17 @@ function getReminderAudioUploadPath(config: AppConfig, fileName: string): string
 
 function getReminderAudioPathConfigPath(config: AppConfig): string {
   return `${getReminderAudioBaseDir(config)}/${REMINDER_AUDIO_PATH_CONFIG_FILE}`;
+}
+
+function getPomodoroStageSettingsBaseDir(config: AppConfig): string {
+  const recordsDir = normalizeRecordsDir(config.githubRecordsDir);
+  return `${recordsDir}/${POMODORO_STAGE_SETTINGS_DIR}`;
+}
+
+function getPomodoroStageSettingsPath(config: AppConfig, deviceId: string, unixTime: number): string {
+  const safeDeviceId = sanitizePomodoroStageSettingsFileSegment(deviceId);
+  const safeUnixTime = normalizeUnixSeconds(unixTime, Math.floor(Date.now() / 1000));
+  return `${getPomodoroStageSettingsBaseDir(config)}/${POMODORO_STAGE_SETTINGS_FILE_PREFIX}-${safeUnixTime}-${safeDeviceId}.json`;
 }
 
 function normalizeDataUrlForGithubAvatar(dataUrl: string): { base64: string; extension: string } {
@@ -1358,6 +1488,129 @@ export async function fetchReminderAudioDataUrlFromGithub(
   const mimeType = normalizeReminderAudioMimeType(mimeTypeHint) ?? inferAudioMimeTypeFromPath(normalizedPath);
   const base64 = body.content.replace(/[\r\n]/g, '');
   return `data:${mimeType};base64,${base64}`;
+}
+
+export async function submitPomodoroStageSettingsToGithub(
+  input: SubmitPomodoroStageSettingsToGithubInput,
+  config: AppConfig,
+  token: string,
+): Promise<SubmitPomodoroStageSettingsToGithubResult> {
+  validateGithubConfig(config, token);
+
+  const deviceId = normalizeDeviceId(input.deviceId);
+  if (!deviceId) {
+    throw new Error('Invalid device ID for pomodoro stage settings.');
+  }
+
+  const nowUnix = Math.floor(Date.now() / 1000);
+  const updatedAtUnix = normalizeUnixSeconds(input.updatedAtUnix, nowUnix);
+  const payload: GithubPomodoroStageSettings = {
+    schemaVersion: 1,
+    deviceId,
+    inUse: input.inUse !== false,
+    workMinutes: normalizePomodoroStageSettingNumber(input.workMinutes, 1, 180, 25),
+    shortBreakMinutes: normalizePomodoroStageSettingNumber(input.shortBreakMinutes, 1, 60, 5),
+    longBreakMinutes: normalizePomodoroStageSettingNumber(input.longBreakMinutes, 1, 90, 15),
+    longBreakEvery: normalizePomodoroStageSettingNumber(input.longBreakEvery, 1, 12, 4),
+    updatedAtUnix,
+  };
+
+  const path = getPomodoroStageSettingsPath(config, deviceId, updatedAtUnix);
+  const currentBody = await fetchGithubFileBody(config, token, path, { allowNotFound: true });
+  const putPayload = makePutPayload(
+    {
+      message: `chore(pomodoro): stage settings ${updatedAtUnix}`,
+      content: toBase64Utf8(JSON.stringify(payload, null, 2)),
+      sha: currentBody?.sha,
+    },
+    config,
+  );
+
+  const response = await fetchGithubContentsPut(config, token, path, putPayload);
+  if (!response.ok) {
+    const body = (await response.json().catch(() => ({}))) as GithubErrorBody;
+    const message = body.message ?? `HTTP ${response.status}`;
+    throw new Error(`GitHub pomodoro stage settings write failed: ${message}`);
+  }
+
+  const data = (await response.json()) as { content?: { path?: string; sha?: string } };
+  return {
+    path: data.content?.path ?? path,
+    sha: data.content?.sha,
+    updatedAtUnix,
+  };
+}
+
+export async function fetchPomodoroStageSettingsFromGithub(
+  config: AppConfig,
+  token: string,
+  deviceId?: string,
+): Promise<FetchedPomodoroStageSettingsFromGithub | null> {
+  validateGithubConfig(config, token);
+
+  const baseDir = getPomodoroStageSettingsBaseDir(config);
+  const entries = await fetchGithubDirectoryItems(config, token, baseDir, { allowNotFound: true });
+  const candidateEntries = entries.filter(
+    (entry) => entry.type === 'file' && entry.name.startsWith(`${POMODORO_STAGE_SETTINGS_FILE_PREFIX}-`) && entry.name.endsWith('.json'),
+  );
+
+  if (!candidateEntries.length) {
+    return null;
+  }
+
+  const candidates: FetchedPomodoroStageSettingsFromGithub[] = [];
+  for (const entry of candidateEntries) {
+    let body: GithubContentFileBody | null = null;
+    try {
+      body = await fetchGithubFileBody(config, token, entry.path, { allowNotFound: true });
+    } catch {
+      continue;
+    }
+
+    if (!body || body.encoding !== 'base64' || typeof body.content !== 'string') {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fromBase64Utf8(body.content));
+    } catch {
+      continue;
+    }
+
+    const settings = normalizePomodoroStageSettingsPayload(parsed);
+    if (!settings) {
+      continue;
+    }
+
+    const fileTimestampUnix = parsePomodoroStageSettingsTimestampFromPath(entry.path) ?? settings.updatedAtUnix;
+    candidates.push({
+      path: entry.path,
+      fileTimestampUnix,
+      settings,
+    });
+  }
+
+  if (!candidates.length) {
+    return null;
+  }
+
+  const currentDeviceId = normalizeDeviceId(deviceId);
+  candidates.sort((a, b) => {
+    const priorityDiff =
+      resolvePomodoroStageSettingsPriority(b.settings, currentDeviceId) - resolvePomodoroStageSettingsPriority(a.settings, currentDeviceId);
+    if (priorityDiff !== 0) {
+      return priorityDiff;
+    }
+
+    if (a.fileTimestampUnix !== b.fileTimestampUnix) {
+      return b.fileTimestampUnix - a.fileTimestampUnix;
+    }
+
+    return b.settings.updatedAtUnix - a.settings.updatedAtUnix;
+  });
+
+  return candidates[0];
 }
 
 

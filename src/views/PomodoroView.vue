@@ -103,16 +103,65 @@
           </label>
           <p class="hint full-width">已完成专注轮次：{{ completedWorkSessions }}。运行中会锁定设置，避免中途改配置。</p>
         </form>
+        <section class="reminder-subsection">
+          <h3>GitHub 阶段配置同步（可选）</h3>
+          <div class="inline-actions">
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="isRunning || syncingStageConfigToGithub || pullingStageConfigFromGithub"
+              @click="syncStageSettingsToGithub"
+            >
+              {{ syncingStageConfigToGithub ? '同步中...' : '同步阶段配置到 GitHub' }}
+            </button>
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="isRunning || syncingStageConfigToGithub || pullingStageConfigFromGithub"
+              @click="pullStageSettingsFromGithub"
+            >
+              {{ pullingStageConfigFromGithub ? '拉取中...' : '从 GitHub 拉取阶段配置' }}
+            </button>
+          </div>
+          <p class="hint">GitHub 配置：{{ githubConfigStatusText }}</p>
+          <p v-if="stageConfigSyncMessage" class="hint">{{ stageConfigSyncMessage }}</p>
+        </section>
       </article>
     </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
+import {
+  fetchPomodoroStageSettingsFromGithub,
+  submitPomodoroStageSettingsToGithub,
+} from '../services/githubService';
+import { loadReminderDefaultAudioAsset } from '../services/reminderAudioAssetService';
+import {
+  loadPomodoroStageSettings,
+  savePomodoroStageSettings,
+} from '../services/pomodoroSettingsService';
+import {
+  loadReminderRingtoneConfig,
+  loadReminderRingtoneSourceMode,
+  loadReminderSynthPatternConfig,
+} from '../services/reminderService';
+import { useAppStore } from '../stores/appStore';
+import type { PomodoroStageSettings } from '../types/pomodoro';
+import type { ReminderSynthPatternConfig } from '../types/reminder';
+import { nowUnixSeconds } from '../utils/date';
 
 type PomodoroPhase = 'work' | 'short-break' | 'long-break' | 'sound-test';
+type PomodoroRingtoneTargetKind = 'uploaded' | 'default-file' | 'synth';
+
+interface PomodoroRingtoneTarget {
+  kind: PomodoroRingtoneTargetKind;
+  sourceUrl?: string;
+  synthConfig: ReminderSynthPatternConfig;
+  fallbackReason?: string;
+}
 
 const DEFAULT_WORK_MINUTES = 25;
 const DEFAULT_SHORT_BREAK_MINUTES = 5;
@@ -143,10 +192,15 @@ const activePhaseBeforeTest = ref<PomodoroPhase>('work');
 const notificationPermission = ref<'unsupported' | NotificationPermission>(
   typeof Notification === 'undefined' ? 'unsupported' : Notification.permission,
 );
+const store = useAppStore();
+const syncingStageConfigToGithub = ref(false);
+const pullingStageConfigFromGithub = ref(false);
+const stageConfigSyncMessage = ref('');
 
 let ticker: number | null = null;
 let phaseEndAtMs = 0;
 let audioContext: AudioContext | null = null;
+let ringtoneFallbackHintShown = false;
 
 const phaseTitleText = computed(() => {
   if (currentPhase.value === 'sound-test') {
@@ -193,7 +247,13 @@ const progressRatio = computed(() => {
   return Math.max(0, Math.min(1, ratio));
 });
 
-const ringDashOffset = computed(() => Number((RING_CIRCUMFERENCE * (1 - progressRatio.value)).toFixed(3)));
+const ringDashOffset = computed(() => {
+  const offset = RING_CIRCUMFERENCE * (1 - progressRatio.value);
+  if (currentPhase.value === 'work' || currentPhase.value === 'short-break') {
+    return Number((-offset).toFixed(3));
+  }
+  return Number(offset.toFixed(3));
+});
 const minuteProgressRatio = computed(() => {
   if (currentPhase.value === 'sound-test') {
     if (totalPhaseSeconds.value <= 0) {
@@ -224,6 +284,29 @@ const notificationPermissionText = computed(() => {
   return '未授权';
 });
 
+const githubConfigStatusText = computed(() => {
+  const owner = store.state.config.githubOwner.trim();
+  const repo = store.state.config.githubRepo.trim();
+  const recordsDir = store.state.config.githubRecordsDir.trim();
+  if (!owner || !repo || !recordsDir) {
+    return 'GitHub 配置未完成（请先配置 owner/repo/recordsDir）。';
+  }
+  if (!store.state.githubToken.trim()) {
+    return 'GitHub Token 未配置，暂不能同步阶段参数。';
+  }
+  return 'GitHub 配置已完成，可同步阶段参数。';
+});
+
+onMounted(() => {
+  const localSettings = loadPomodoroStageSettings();
+  if (localSettings) {
+    applyStageSettings(localSettings);
+    return;
+  }
+
+  persistStageSettingsLocally();
+});
+
 onBeforeUnmount(() => {
   stopTicker();
 
@@ -239,6 +322,51 @@ function clampInteger(value: number, min: number, max: number, fallback: number)
   }
   const rounded = Math.floor(value);
   return Math.min(max, Math.max(min, rounded));
+}
+
+function buildStageSettingsSnapshot(updatedAtUnix = nowUnixSeconds()): PomodoroStageSettings {
+  return {
+    workMinutes: clampInteger(workMinutes.value, 1, 180, DEFAULT_WORK_MINUTES),
+    shortBreakMinutes: clampInteger(shortBreakMinutes.value, 1, 60, DEFAULT_SHORT_BREAK_MINUTES),
+    longBreakMinutes: clampInteger(longBreakMinutes.value, 1, 90, DEFAULT_LONG_BREAK_MINUTES),
+    longBreakEvery: clampInteger(longBreakEvery.value, 1, 12, DEFAULT_LONG_BREAK_EVERY),
+    updatedAtUnix: Math.floor(updatedAtUnix),
+  };
+}
+
+function persistStageSettingsLocally(updatedAtUnix = nowUnixSeconds()): void {
+  savePomodoroStageSettings(buildStageSettingsSnapshot(updatedAtUnix));
+}
+
+function applyStageSettings(settings: PomodoroStageSettings): void {
+  workMinutes.value = clampInteger(settings.workMinutes, 1, 180, DEFAULT_WORK_MINUTES);
+  shortBreakMinutes.value = clampInteger(settings.shortBreakMinutes, 1, 60, DEFAULT_SHORT_BREAK_MINUTES);
+  longBreakMinutes.value = clampInteger(settings.longBreakMinutes, 1, 90, DEFAULT_LONG_BREAK_MINUTES);
+  longBreakEvery.value = clampInteger(settings.longBreakEvery, 1, 12, DEFAULT_LONG_BREAK_EVERY);
+  workMinutesInput.value = String(workMinutes.value);
+  shortBreakMinutesInput.value = String(shortBreakMinutes.value);
+  longBreakMinutesInput.value = String(longBreakMinutes.value);
+  longBreakEveryInput.value = String(longBreakEvery.value);
+
+  if (!isRunning.value && currentPhase.value !== 'sound-test') {
+    syncCurrentPhaseDuration(true);
+  }
+}
+
+function resolveGithubTokenOrThrow(): string {
+  const owner = store.state.config.githubOwner.trim();
+  const repo = store.state.config.githubRepo.trim();
+  const recordsDir = store.state.config.githubRecordsDir.trim();
+  if (!owner || !repo || !recordsDir) {
+    throw new Error('请先在页面设置中完成 GitHub owner/repo/recordsDir 配置。');
+  }
+
+  const token = store.state.githubToken.trim();
+  if (!token) {
+    throw new Error('请先配置 GitHub Token（PAT）。');
+  }
+
+  return token;
 }
 
 function resolvePhaseSeconds(phase: PomodoroPhase): number {
@@ -405,50 +533,204 @@ function emitCompletionNotification(finishedPhase: PomodoroPhase, nextPhase: Pom
   }
 }
 
-function resolveAudioContextConstructor():
-  | typeof AudioContext
-  | undefined {
+function resolveAudioContextConstructor(): typeof AudioContext | undefined {
   return window.AudioContext ?? (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
 }
 
-function playCompletionTone(): void {
+function ensureAudioContext(): AudioContext {
+  if (audioContext) {
+    return audioContext;
+  }
+
   const AudioContextConstructor = resolveAudioContextConstructor();
   if (!AudioContextConstructor) {
+    throw new Error('当前浏览器不支持 Web Audio。');
+  }
+
+  audioContext = new AudioContextConstructor();
+  return audioContext;
+}
+
+async function playSyntheticToneOnce(config: ReminderSynthPatternConfig): Promise<void> {
+  const context = ensureAudioContext();
+  if (context.state === 'suspended') {
+    await context.resume();
+  }
+
+  const toneDurationSeconds = config.toneDurationMs / 1000;
+  const gapDurationSeconds = config.gapDurationMs / 1000;
+  const startTime = context.currentTime + 0.02;
+  let cursor = startTime;
+
+  config.frequencies.forEach((frequency, index) => {
+    const oscillator = context.createOscillator();
+    const gainNode = context.createGain();
+    const toneStart = cursor;
+    const toneEnd = toneStart + toneDurationSeconds;
+    const attackEnd = toneStart + Math.min(0.03, Math.max(0.005, toneDurationSeconds * 0.2));
+
+    oscillator.type = config.waveform;
+    oscillator.frequency.setValueAtTime(frequency, toneStart);
+
+    gainNode.gain.setValueAtTime(0.0001, toneStart);
+    gainNode.gain.exponentialRampToValueAtTime(Math.max(0.0001, config.gain), attackEnd);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, toneEnd);
+
+    oscillator.connect(gainNode);
+    gainNode.connect(context.destination);
+    oscillator.start(toneStart);
+    oscillator.stop(toneEnd + 0.01);
+
+    if (index < config.frequencies.length - 1) {
+      cursor = toneEnd + gapDurationSeconds;
+    }
+  });
+}
+
+function cleanupAudioElement(audio: HTMLAudioElement): void {
+  audio.pause();
+  audio.currentTime = 0;
+  audio.removeAttribute('src');
+  audio.load();
+}
+
+function waitAudioSamplePlayback(audio: HTMLAudioElement, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
+
+    const timer = window.setTimeout(finish, timeoutMs);
+    audio.addEventListener('ended', finish, { once: true });
+    audio.addEventListener('error', finish, { once: true });
+  });
+}
+
+async function playAudioSourceOnce(sourceUrl: string): Promise<void> {
+  const audio = new Audio(sourceUrl);
+  audio.preload = 'auto';
+
+  try {
+    await audio.play();
+    await waitAudioSamplePlayback(audio, 1500);
+  } finally {
+    cleanupAudioElement(audio);
+  }
+}
+
+function notifyRingtoneFallbackIfNeeded(target: PomodoroRingtoneTarget): void {
+  if (!target.fallbackReason) {
+    ringtoneFallbackHintShown = false;
+    return;
+  }
+  if (ringtoneFallbackHintShown) {
     return;
   }
 
-  if (!audioContext) {
-    audioContext = new AudioContextConstructor();
+  ringtoneFallbackHintShown = true;
+  store.showToast(target.fallbackReason, 'info');
+}
+
+async function resolvePomodoroRingtoneTarget(): Promise<PomodoroRingtoneTarget> {
+  const sourceMode = loadReminderRingtoneSourceMode();
+  const uploaded = loadReminderRingtoneConfig();
+  const synthConfig = loadReminderSynthPatternConfig();
+  const defaultAudioAsset = await loadReminderDefaultAudioAsset();
+
+  if (sourceMode === 'uploaded') {
+    if (uploaded) {
+      return {
+        kind: 'uploaded',
+        sourceUrl: uploaded.dataUrl,
+        synthConfig,
+      };
+    }
+
+    return {
+      kind: 'synth',
+      fallbackReason: '上传铃声未配置，已自动回退到合成铃声。',
+      synthConfig,
+    };
   }
 
-  void audioContext.resume().catch(() => undefined);
-  const now = audioContext.currentTime;
-  const gain = audioContext.createGain();
-  gain.gain.setValueAtTime(0.0001, now);
-  gain.gain.exponentialRampToValueAtTime(0.16, now + 0.02);
-  gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.34);
-  gain.connect(audioContext.destination);
+  if (sourceMode === 'default-file') {
+    if (defaultAudioAsset) {
+      return {
+        kind: 'default-file',
+        sourceUrl: defaultAudioAsset.url,
+        synthConfig,
+      };
+    }
 
-  const firstTone = audioContext.createOscillator();
-  firstTone.type = 'sine';
-  firstTone.frequency.setValueAtTime(880, now);
-  firstTone.connect(gain);
-  firstTone.start(now);
-  firstTone.stop(now + 0.18);
+    return {
+      kind: 'synth',
+      fallbackReason: '默认铃声文件不可用，已自动回退到合成铃声。',
+      synthConfig,
+    };
+  }
 
-  const secondTone = audioContext.createOscillator();
-  secondTone.type = 'sine';
-  secondTone.frequency.setValueAtTime(659, now + 0.18);
-  secondTone.connect(gain);
-  secondTone.start(now + 0.18);
-  secondTone.stop(now + 0.34);
+  if (sourceMode === 'synth') {
+    return {
+      kind: 'synth',
+      synthConfig,
+    };
+  }
+
+  if (uploaded) {
+    return {
+      kind: 'uploaded',
+      sourceUrl: uploaded.dataUrl,
+      synthConfig,
+    };
+  }
+
+  if (defaultAudioAsset) {
+    return {
+      kind: 'default-file',
+      sourceUrl: defaultAudioAsset.url,
+      synthConfig,
+    };
+  }
+
+  return {
+    kind: 'synth',
+    synthConfig,
+  };
+}
+
+async function playCompletionTone(): Promise<void> {
+  const target = await resolvePomodoroRingtoneTarget();
+  notifyRingtoneFallbackIfNeeded(target);
+
+  if (target.kind === 'synth') {
+    await playSyntheticToneOnce(target.synthConfig);
+    return;
+  }
+
+  if (!target.sourceUrl) {
+    await playSyntheticToneOnce(target.synthConfig);
+    return;
+  }
+
+  try {
+    await playAudioSourceOnce(target.sourceUrl);
+  } catch {
+    await playSyntheticToneOnce(target.synthConfig);
+    store.showToast('文件铃声播放失败，已回退到合成铃声。', 'info');
+  }
 }
 
 function handlePhaseCompleted(): void {
   const finishedPhase = currentPhase.value;
   isRunning.value = false;
   stopTicker();
-  playCompletionTone();
+  void playCompletionTone().catch(() => undefined);
   moveToNextPhase(finishedPhase);
   if (finishedPhase === 'sound-test') {
     return;
@@ -474,6 +756,7 @@ function commitWorkMinutesInput(): void {
   const normalized = parseSettingInput(workMinutesInput.value, 1, 180, workMinutes.value);
   workMinutes.value = normalized;
   workMinutesInput.value = String(normalized);
+  persistStageSettingsLocally();
   if (!isRunning.value && currentPhase.value === 'work') {
     syncCurrentPhaseDuration(true);
   }
@@ -483,6 +766,7 @@ function commitShortBreakMinutesInput(): void {
   const normalized = parseSettingInput(shortBreakMinutesInput.value, 1, 60, shortBreakMinutes.value);
   shortBreakMinutes.value = normalized;
   shortBreakMinutesInput.value = String(normalized);
+  persistStageSettingsLocally();
   if (!isRunning.value && currentPhase.value === 'short-break') {
     syncCurrentPhaseDuration(true);
   }
@@ -492,6 +776,7 @@ function commitLongBreakMinutesInput(): void {
   const normalized = parseSettingInput(longBreakMinutesInput.value, 1, 90, longBreakMinutes.value);
   longBreakMinutes.value = normalized;
   longBreakMinutesInput.value = String(normalized);
+  persistStageSettingsLocally();
   if (!isRunning.value && currentPhase.value === 'long-break') {
     syncCurrentPhaseDuration(true);
   }
@@ -501,6 +786,7 @@ function commitLongBreakEveryInput(): void {
   const normalized = parseSettingInput(longBreakEveryInput.value, 1, 12, longBreakEvery.value);
   longBreakEvery.value = normalized;
   longBreakEveryInput.value = String(normalized);
+  persistStageSettingsLocally();
 }
 
 function startSoundTestPhase(): void {
@@ -515,6 +801,65 @@ function startSoundTestPhase(): void {
   currentPhase.value = 'sound-test';
   syncCurrentPhaseDuration(true);
   startCountdown();
+}
+
+async function syncStageSettingsToGithub(): Promise<void> {
+  if (syncingStageConfigToGithub.value) {
+    return;
+  }
+
+  try {
+    const token = resolveGithubTokenOrThrow();
+    syncingStageConfigToGithub.value = true;
+    stageConfigSyncMessage.value = '正在同步阶段配置到 GitHub...';
+    const settings = buildStageSettingsSnapshot();
+    persistStageSettingsLocally(settings.updatedAtUnix);
+
+    const result = await submitPomodoroStageSettingsToGithub(
+      {
+        ...settings,
+        deviceId: store.state.deviceMeta.deviceId,
+        inUse: true,
+      },
+      store.state.config,
+      token,
+    );
+
+    stageConfigSyncMessage.value = `已同步阶段配置：${result.path}`;
+    store.showToast('番茄钟阶段配置已同步到 GitHub。', 'success');
+  } catch (error) {
+    stageConfigSyncMessage.value = '';
+    store.showToast(error instanceof Error ? error.message : '同步番茄钟阶段配置失败。', 'error');
+  } finally {
+    syncingStageConfigToGithub.value = false;
+  }
+}
+
+async function pullStageSettingsFromGithub(): Promise<void> {
+  if (pullingStageConfigFromGithub.value) {
+    return;
+  }
+
+  try {
+    const token = resolveGithubTokenOrThrow();
+    pullingStageConfigFromGithub.value = true;
+    stageConfigSyncMessage.value = '正在从 GitHub 拉取阶段配置...';
+
+    const pulled = await fetchPomodoroStageSettingsFromGithub(store.state.config, token, store.state.deviceMeta.deviceId);
+    if (!pulled) {
+      throw new Error('GitHub 中未找到番茄钟阶段配置文件。');
+    }
+
+    applyStageSettings(pulled.settings);
+    persistStageSettingsLocally(pulled.settings.updatedAtUnix);
+    stageConfigSyncMessage.value = `已拉取阶段配置：${pulled.path}`;
+    store.showToast('已从 GitHub 拉取番茄钟阶段配置。', 'success');
+  } catch (error) {
+    stageConfigSyncMessage.value = '';
+    store.showToast(error instanceof Error ? error.message : '拉取番茄钟阶段配置失败。', 'error');
+  } finally {
+    pullingStageConfigFromGithub.value = false;
+  }
 }
 
 async function requestNotificationPermission(): Promise<void> {

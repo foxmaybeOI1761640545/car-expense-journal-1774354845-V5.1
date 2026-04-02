@@ -39,6 +39,7 @@ import {
   clearReminderSynthPatternConfigStorage,
   clearReminderTasksStorage,
 } from '../services/reminderService';
+import { clearPomodoroStageSettingsStorage } from '../services/pomodoroSettingsService';
 import { nowIsoString, nowUnixSeconds, unixSecondsToIsoString } from '../utils/date';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
@@ -918,6 +919,7 @@ async function clearLocalCache(options: ClearLocalCacheOptions = {}): Promise<vo
   clearReminderRingtoneConfig();
   clearReminderRingtoneSourceModeStorage();
   clearReminderSynthPatternConfigStorage();
+  clearPomodoroStageSettingsStorage();
 
   state.config = resolveAppConfig(fileConfig, {});
   applyBranding(state.config);
