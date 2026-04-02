@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "rmd-5d56b35d-253f-4278-944b-aa585670bd6d",
+  "deviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "kind": "custom",
+  "title": "自定义倒计时提醒",
+  "durationSeconds": 5,
+  "triggerAtUnix": 1775159557,
+  "scheduleMode": "countdown",
+  "status": "pending",
+  "soundEnabled": true,
+  "notificationEnabled": true,
+  "requiresAcknowledgement": false,
+  "createdAtUnix": 1775159552,
+  "updatedAtUnix": 1775159553,
+  "retryCount": 0,
+  "source": "frontend"
+}
