@@ -1,5 +1,6 @@
 import http from 'node:http';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import webpush from 'web-push';
 
 const SERVICE_NAME = 'car-journal-reminder-backend';
 const GITHUB_API_BASE = 'https://api.github.com';
@@ -17,8 +18,13 @@ const MAX_GITHUB_PROXY_BODY_BYTES = clampInteger(
   32 * 1024,
   32 * 1024 * 1024,
 );
+const MAX_PUSH_JSON_BODY_BYTES = clampInteger(process.env.MAX_PUSH_JSON_BODY_BYTES, 128 * 1024, 4 * 1024, 2 * 1024 * 1024);
 const PAT_WRAP_KEY_VERSION = (process.env.PAT_WRAP_KEY_VERSION || 'v1').trim() || 'v1';
 const PAT_WRAP_KEY = resolvePatWrapKey(process.env.PAT_WRAP_KEY_BASE64 || '');
+const PUSH_SCHEMA_VERSION = 1;
+const VAPID_PUBLIC_KEY = normalizeNonEmptyString(process.env.VAPID_PUBLIC_KEY || '', 300);
+const VAPID_PRIVATE_KEY = normalizeNonEmptyString(process.env.VAPID_PRIVATE_KEY || '', 300);
+const VAPID_SUBJECT = normalizeNonEmptyString(process.env.VAPID_SUBJECT || '', 300);
 const DEFAULT_CORS_ORIGIN_RULES = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -29,6 +35,15 @@ const DEFAULT_CORS_ORIGIN_RULES = [
 const CORS_ORIGINS = resolveCorsOrigins(process.env.CORS_ORIGINS || '');
 const startedAt = Date.now();
 let listeningPort = REQUESTED_PORT;
+let pushConfigured = Boolean(VAPID_PUBLIC_KEY && VAPID_PRIVATE_KEY && VAPID_SUBJECT);
+
+if (pushConfigured) {
+  try {
+    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+  } catch {
+    pushConfigured = false;
+  }
+}
 
 function parseCorsOrigins(raw) {
   return raw
@@ -301,6 +316,161 @@ function normalizeRepoPath(rawPath) {
   return path;
 }
 
+function normalizePathSegment(rawValue, fallback = 'unknown', maxLength = 120) {
+  const normalized = normalizeNonEmptyString(rawValue, maxLength)
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return normalized || fallback;
+}
+
+function toBase64Utf8(value) {
+  return Buffer.from(value, 'utf8').toString('base64');
+}
+
+function fromBase64Utf8(value) {
+  return Buffer.from(value.replace(/[\r\n]/g, ''), 'base64').toString('utf8');
+}
+
+function makeReminderPushSubscriptionId(endpoint) {
+  const hash = createHash('sha256').update(endpoint, 'utf8').digest('hex');
+  return `push-${hash.slice(0, 24)}`;
+}
+
+function normalizeSubscriptionEndpoint(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  const endpoint = value.trim();
+  if (!endpoint || endpoint.length > 4000) {
+    return '';
+  }
+
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== 'https:') {
+      return '';
+    }
+  } catch {
+    return '';
+  }
+
+  return endpoint;
+}
+
+function normalizeSubscriptionKey(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  const normalized = value.trim();
+  if (!normalized || normalized.length > 4096) {
+    return '';
+  }
+  return normalized;
+}
+
+function normalizePushSubscription(raw) {
+  if (!raw || typeof raw !== 'object') {
+    return null;
+  }
+
+  const value = raw;
+  const endpoint = normalizeSubscriptionEndpoint(value.endpoint);
+  const keysRaw = value.keys && typeof value.keys === 'object' ? value.keys : {};
+  const p256dh = normalizeSubscriptionKey(keysRaw.p256dh);
+  const auth = normalizeSubscriptionKey(keysRaw.auth);
+
+  if (!endpoint || !p256dh || !auth) {
+    return null;
+  }
+
+  const expirationTime =
+    value.expirationTime === null || value.expirationTime === undefined
+      ? null
+      : Number.isFinite(Number(value.expirationTime))
+        ? Math.floor(Number(value.expirationTime))
+        : null;
+
+  return {
+    endpoint,
+    expirationTime,
+    keys: {
+      p256dh,
+      auth,
+    },
+  };
+}
+
+function extractGithubTokenCandidate(body) {
+  const sealedToken = normalizeNonEmptyString(body?.sealedToken, 8192);
+  if (sealedToken) {
+    return sealedToken;
+  }
+
+  return normalizeNonEmptyString(body?.githubToken, 8192);
+}
+
+function resolveGithubPatToken(tokenCandidate) {
+  if (!tokenCandidate) {
+    throw new Error('Missing GitHub token.');
+  }
+  if (/^pat\.sealed\./.test(tokenCandidate)) {
+    return unsealPatToken(tokenCandidate);
+  }
+  return tokenCandidate;
+}
+
+function parsePushGithubContext(body) {
+  const tokenCandidate = extractGithubTokenCandidate(body);
+  const owner = normalizeNonEmptyString(body?.owner, 120);
+  const repo = normalizeNonEmptyString(body?.repo, 120);
+  const branch = normalizeNonEmptyString(body?.branch, 160);
+  const recordsDir = normalizeRepoPath(body?.recordsDir);
+
+  if (!tokenCandidate || !owner || !repo || !recordsDir) {
+    return null;
+  }
+
+  return {
+    tokenCandidate,
+    owner,
+    repo,
+    branch,
+    recordsDir,
+  };
+}
+
+function parsePushSubscriptionFileContent(fileBody) {
+  if (!fileBody || typeof fileBody !== 'object') {
+    return null;
+  }
+
+  const content = typeof fileBody.content === 'string' ? fileBody.content : '';
+  const encoding = typeof fileBody.encoding === 'string' ? fileBody.encoding.toLowerCase() : '';
+  if (!content || encoding !== 'base64') {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(fromBase64Utf8(content));
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function buildPushSubscriptionFilePath(recordsDir, deviceId, subscriptionId) {
+  const safeDeviceId = normalizePathSegment(deviceId, 'device', 120);
+  const safeSubscriptionId = normalizePathSegment(subscriptionId, 'subscription', 120);
+  return `${recordsDir}/reminders/subscriptions/${safeDeviceId}/${safeSubscriptionId}.json`;
+}
+
 function encodeContentPath(path) {
   return path
     .split('/')
@@ -404,6 +574,415 @@ async function proxyGithubContentsRequest({ method, pat, owner, repo, branch, pa
     status: upstreamResponse.status,
     body,
   };
+}
+
+function extractGithubErrorMessage(body, fallback) {
+  if (body && typeof body === 'object' && typeof body.message === 'string' && body.message.trim()) {
+    return body.message.trim();
+  }
+  return fallback;
+}
+
+async function fetchGithubFileBodyByPat({ pat, owner, repo, branch, path, allowNotFound = false }) {
+  const response = await proxyGithubContentsRequest({
+    method: 'GET',
+    pat,
+    owner,
+    repo,
+    branch,
+    path,
+  });
+
+  if (response.status === 404 && allowNotFound) {
+    return null;
+  }
+
+  if (response.status !== 200) {
+    const fallback = `GitHub GET failed (HTTP ${response.status}).`;
+    throw new Error(extractGithubErrorMessage(response.body, fallback));
+  }
+
+  if (!response.body || typeof response.body !== 'object') {
+    throw new Error('GitHub GET returned invalid payload.');
+  }
+
+  return response.body;
+}
+
+async function putGithubFileByPat({ pat, owner, repo, branch, path, message, content, sha }) {
+  const payload = {
+    message,
+    content,
+    sha,
+    branch: branch || undefined,
+  };
+
+  const response = await proxyGithubContentsRequest({
+    method: 'PUT',
+    pat,
+    owner,
+    repo,
+    branch,
+    path,
+    payload,
+  });
+
+  if (response.status !== 200 && response.status !== 201) {
+    const fallback = `GitHub PUT failed (HTTP ${response.status}).`;
+    throw new Error(extractGithubErrorMessage(response.body, fallback));
+  }
+
+  return response.body;
+}
+
+function validatePushSubscriptionUpsertBody(body) {
+  const github = parsePushGithubContext(body);
+  const deviceId = normalizeNonEmptyString(body?.deviceId, 160);
+  const subscription = normalizePushSubscription(body?.subscription);
+  if (!github || !deviceId || !subscription) {
+    return {
+      ok: false,
+      message: 'Invalid push subscription upsert request.',
+    };
+  }
+
+  return {
+    ok: true,
+    github,
+    deviceId,
+    subscription,
+  };
+}
+
+function validatePushSubscriptionRemoveBody(body) {
+  const github = parsePushGithubContext(body);
+  const deviceId = normalizeNonEmptyString(body?.deviceId, 160);
+  const subscriptionIdRaw = normalizeNonEmptyString(body?.subscriptionId, 160);
+  const endpoint = normalizeSubscriptionEndpoint(body?.endpoint);
+  const subscriptionId = subscriptionIdRaw || (endpoint ? makeReminderPushSubscriptionId(endpoint) : '');
+
+  if (!github || !deviceId || !subscriptionId) {
+    return {
+      ok: false,
+      message: 'Invalid push subscription remove request.',
+    };
+  }
+
+  return {
+    ok: true,
+    github,
+    deviceId,
+    subscriptionId,
+    endpoint: endpoint || undefined,
+  };
+}
+
+function validatePushTestSendBody(body) {
+  const subscription = normalizePushSubscription(body?.subscription);
+  if (!subscription) {
+    return {
+      ok: false,
+      message: 'Invalid push subscription.',
+    };
+  }
+
+  const title = normalizeNonEmptyString(body?.title, 120) || '提醒中心';
+  const message = normalizeNonEmptyString(body?.message, 500) || '到时提醒';
+  const tag = normalizeNonEmptyString(body?.tag, 120) || 'reminder-test';
+  const url = normalizeNonEmptyString(body?.url, 400) || '/#/reminder';
+
+  return {
+    ok: true,
+    subscription,
+    payload: {
+      title,
+      body: message,
+      tag,
+      url,
+      source: 'backend-test',
+      triggeredAtUnix: Math.floor(Date.now() / 1000),
+    },
+  };
+}
+
+function resolveGithubPatForRequest(tokenCandidate) {
+  try {
+    return resolveGithubPatToken(tokenCandidate);
+  } catch {
+    throw new Error('Invalid GitHub token.');
+  }
+}
+
+async function handlePushVapidPublicKeyRequest(req, res, origin) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  if (req.method === 'HEAD') {
+    writeNoContent(res, origin, 200);
+    return;
+  }
+
+  if (!pushConfigured || !VAPID_PUBLIC_KEY) {
+    writeJson(
+      res,
+      503,
+      {
+        ok: false,
+        message: 'Push VAPID is not configured.',
+      },
+      origin,
+    );
+    return;
+  }
+
+  writeJson(
+    res,
+    200,
+    {
+      ok: true,
+      vapidPublicKey: VAPID_PUBLIC_KEY,
+      subject: VAPID_SUBJECT,
+    },
+    origin,
+  );
+}
+
+async function handlePushSubscriptionUpsertRequest(req, res, origin) {
+  if (req.method !== 'POST') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req, MAX_PUSH_JSON_BODY_BYTES);
+    const validated = validatePushSubscriptionUpsertBody(body);
+    if (!validated.ok) {
+      writeJson(res, 400, { ok: false, message: validated.message }, origin);
+      return;
+    }
+
+    const pat = resolveGithubPatForRequest(validated.github.tokenCandidate);
+    const subscriptionId = makeReminderPushSubscriptionId(validated.subscription.endpoint);
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const path = buildPushSubscriptionFilePath(validated.github.recordsDir, validated.deviceId, subscriptionId);
+    const existingFile = await fetchGithubFileBodyByPat({
+      pat,
+      owner: validated.github.owner,
+      repo: validated.github.repo,
+      branch: validated.github.branch,
+      path,
+      allowNotFound: true,
+    });
+    const existingPayload = parsePushSubscriptionFileContent(existingFile);
+    const payload = {
+      schemaVersion: PUSH_SCHEMA_VERSION,
+      id: subscriptionId,
+      deviceId: validated.deviceId,
+      endpoint: validated.subscription.endpoint,
+      expirationTime: validated.subscription.expirationTime,
+      keys: {
+        p256dh: validated.subscription.keys.p256dh,
+        auth: validated.subscription.keys.auth,
+      },
+      enabled: true,
+      createdAtUnix: Number.isFinite(Number(existingPayload?.createdAtUnix))
+        ? Math.floor(Number(existingPayload.createdAtUnix))
+        : nowUnix,
+      updatedAtUnix: nowUnix,
+      lastSeenAtUnix: nowUnix,
+    };
+    const content = toBase64Utf8(JSON.stringify(payload, null, 2));
+
+    await putGithubFileByPat({
+      pat,
+      owner: validated.github.owner,
+      repo: validated.github.repo,
+      branch: validated.github.branch,
+      path,
+      message: `chore(reminder-push): upsert subscription ${subscriptionId}`,
+      content,
+      sha: typeof existingFile?.sha === 'string' ? existingFile.sha : undefined,
+    });
+
+    writeJson(
+      res,
+      200,
+      {
+        ok: true,
+        subscriptionId,
+        path,
+        updatedAtUnix: nowUnix,
+      },
+      origin,
+    );
+  } catch (error) {
+    if (error && error.code === 'BODY_TOO_LARGE') {
+      writeJson(res, 413, { ok: false, message: 'JSON body too large.' }, origin);
+      return;
+    }
+    if (error && error.code === 'INVALID_JSON') {
+      writeJson(res, 400, { ok: false, message: 'Invalid JSON.' }, origin);
+      return;
+    }
+    writeJson(
+      res,
+      502,
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : 'Failed to upsert push subscription.',
+      },
+      origin,
+    );
+  }
+}
+
+async function handlePushSubscriptionRemoveRequest(req, res, origin) {
+  if (req.method !== 'POST') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req, MAX_PUSH_JSON_BODY_BYTES);
+    const validated = validatePushSubscriptionRemoveBody(body);
+    if (!validated.ok) {
+      writeJson(res, 400, { ok: false, message: validated.message }, origin);
+      return;
+    }
+
+    const pat = resolveGithubPatForRequest(validated.github.tokenCandidate);
+    const nowUnix = Math.floor(Date.now() / 1000);
+    const path = buildPushSubscriptionFilePath(validated.github.recordsDir, validated.deviceId, validated.subscriptionId);
+    const existingFile = await fetchGithubFileBodyByPat({
+      pat,
+      owner: validated.github.owner,
+      repo: validated.github.repo,
+      branch: validated.github.branch,
+      path,
+      allowNotFound: true,
+    });
+
+    if (!existingFile) {
+      writeJson(
+        res,
+        200,
+        {
+          ok: true,
+          removed: false,
+          subscriptionId: validated.subscriptionId,
+          path,
+        },
+        origin,
+      );
+      return;
+    }
+
+    const existingPayload = parsePushSubscriptionFileContent(existingFile);
+    const nextPayload = {
+      ...(existingPayload && typeof existingPayload === 'object' ? existingPayload : {}),
+      schemaVersion: PUSH_SCHEMA_VERSION,
+      id: validated.subscriptionId,
+      deviceId: validated.deviceId,
+      endpoint:
+        validated.endpoint ||
+        (existingPayload && typeof existingPayload.endpoint === 'string' ? existingPayload.endpoint : undefined),
+      enabled: false,
+      updatedAtUnix: nowUnix,
+      removedAtUnix: nowUnix,
+    };
+    const content = toBase64Utf8(JSON.stringify(nextPayload, null, 2));
+
+    await putGithubFileByPat({
+      pat,
+      owner: validated.github.owner,
+      repo: validated.github.repo,
+      branch: validated.github.branch,
+      path,
+      message: `chore(reminder-push): disable subscription ${validated.subscriptionId}`,
+      content,
+      sha: typeof existingFile.sha === 'string' ? existingFile.sha : undefined,
+    });
+
+    writeJson(
+      res,
+      200,
+      {
+        ok: true,
+        removed: true,
+        subscriptionId: validated.subscriptionId,
+        path,
+        updatedAtUnix: nowUnix,
+      },
+      origin,
+    );
+  } catch (error) {
+    if (error && error.code === 'BODY_TOO_LARGE') {
+      writeJson(res, 413, { ok: false, message: 'JSON body too large.' }, origin);
+      return;
+    }
+    if (error && error.code === 'INVALID_JSON') {
+      writeJson(res, 400, { ok: false, message: 'Invalid JSON.' }, origin);
+      return;
+    }
+    writeJson(
+      res,
+      502,
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : 'Failed to remove push subscription.',
+      },
+      origin,
+    );
+  }
+}
+
+async function handlePushTestSendRequest(req, res, origin) {
+  if (req.method !== 'POST') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  if (!pushConfigured) {
+    writeJson(res, 503, { ok: false, message: 'Push VAPID is not configured.' }, origin);
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req, MAX_PUSH_JSON_BODY_BYTES);
+    const validated = validatePushTestSendBody(body);
+    if (!validated.ok) {
+      writeJson(res, 400, { ok: false, message: validated.message }, origin);
+      return;
+    }
+
+    const sendResult = await webpush.sendNotification(validated.subscription, JSON.stringify(validated.payload), {
+      TTL: 300,
+      urgency: 'high',
+    });
+
+    writeJson(
+      res,
+      200,
+      {
+        ok: true,
+        statusCode: sendResult?.statusCode ?? 200,
+      },
+      origin,
+    );
+  } catch (error) {
+    const statusCode = Number(error?.statusCode);
+    writeJson(
+      res,
+      Number.isFinite(statusCode) && statusCode >= 400 ? statusCode : 502,
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : 'Push test send failed.',
+      },
+      origin,
+    );
+  }
 }
 
 function validateSealRequestBody(body) {
@@ -642,6 +1221,26 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (pathname === '/api/push/vapid-public-key') {
+    void handlePushVapidPublicKeyRequest(req, res, origin);
+    return;
+  }
+
+  if (pathname === '/api/push/subscriptions/upsert') {
+    void handlePushSubscriptionUpsertRequest(req, res, origin);
+    return;
+  }
+
+  if (pathname === '/api/push/subscriptions/remove') {
+    void handlePushSubscriptionRemoveRequest(req, res, origin);
+    return;
+  }
+
+  if (pathname === '/api/push/test-send') {
+    void handlePushTestSendRequest(req, res, origin);
+    return;
+  }
+
   if (pathname === '/api/github/contents/get') {
     void handleGithubContentsProxyRequest(req, res, origin, 'get');
     return;
@@ -700,6 +1299,7 @@ async function startServer() {
       console.log(`[${SERVICE_NAME}] listening on port ${port}`);
       console.log(`[${SERVICE_NAME}] cors origins: ${CORS_ORIGINS.join(', ')}`);
       console.log(`[${SERVICE_NAME}] pat sealing: ${PAT_WRAP_KEY ? `enabled (${PAT_WRAP_KEY_VERSION})` : 'disabled'}`);
+      console.log(`[${SERVICE_NAME}] push vapid: ${pushConfigured ? 'enabled' : 'disabled'}`);
       if (fallbackUsed) {
         console.warn(`[${SERVICE_NAME}] requested port ${REQUESTED_PORT} is busy, fallback to ${port}`);
       }

@@ -201,6 +201,38 @@
           <p v-if="githubSyncMessage" class="hint">{{ githubSyncMessage }}</p>
         </section>
         <p class="hint">通知权限：{{ notificationPermissionText }}</p>
+        <section class="reminder-subsection">
+          <h3>锁屏 Push 提醒（测试中）</h3>
+          <p class="hint">状态：{{ pushStatusText }}</p>
+          <p v-if="pushStatusMessage" class="hint">{{ pushStatusMessage }}</p>
+          <div class="inline-actions">
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="!canManagePushNotifications || pushStatus === 'syncing'"
+              @click="enableLockscreenPushNotifications"
+            >
+              启用锁屏 Push 提醒
+            </button>
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="!pushRuntimeSupported || pushStatus === 'syncing'"
+              @click="disableLockscreenPushNotifications"
+            >
+              关闭锁屏 Push 提醒
+            </button>
+            <button
+              class="btn btn--secondary"
+              type="button"
+              :disabled="!pushRuntimeSupported || sendingPushTest || pushStatus === 'syncing'"
+              @click="sendLockscreenPushNotificationTest"
+            >
+              {{ sendingPushTest ? '发送中...' : '发送 Push 测试' }}
+            </button>
+          </div>
+          <p class="hint">提示：锁屏提醒由系统和浏览器策略决定，不保证每次都响铃。</p>
+        </section>
         <p class="hint">声音状态：{{ soundStatusText }}</p>
         <p class="hint">当前铃声：{{ ringtoneLabelText }}</p>
         <p class="hint">循环状态：{{ soundLoopStatusText }}</p>
@@ -310,6 +342,14 @@ import {
 import { loadReminderDefaultAudioAsset, type ReminderResolvedDefaultAudioAsset } from '../services/reminderAudioAssetService';
 import { resolveReminderBackendBaseUrl } from '../services/reminderBackendUrlService';
 import { pingReminderBackend, type ReminderBackendPingResult } from '../services/reminderBackendService';
+import {
+  fetchReminderPushVapidPublicKey,
+  removeReminderPushSubscription,
+  sendReminderPushTest,
+  serializePushSubscription,
+  upsertReminderPushSubscription,
+  urlBase64ToUint8Array,
+} from '../services/reminderPushService';
 import {
   acknowledgeReminderTask,
   cancelReminderTask,
@@ -436,9 +476,19 @@ const backendPingResult = ref<ReminderBackendPingResult | null>(null);
 const alarmLoopRunning = ref(false);
 const isMobileLayout = ref(false);
 const isChannelCardCollapsed = ref(false);
+const pushStatus = ref<'unsupported' | 'idle' | 'syncing' | 'enabled' | 'error'>('idle');
+const pushStatusMessage = ref('');
+const pushSubscriptionId = ref('');
+const sendingPushTest = ref(false);
 
 const reminderApiBaseUrl = computed(() => store.state.config.reminderApiBaseUrl.trim());
 const effectiveReminderApiBaseUrl = computed(() => resolveReminderBackendBaseUrl(store.state.config));
+const pushRuntimeSupported = computed(
+  () => typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window,
+);
+const canManagePushNotifications = computed(
+  () => pushRuntimeSupported.value && notificationPermission.value !== 'unsupported',
+);
 const pendingTasks = computed(() => tasks.value.filter((task) => task.status === 'pending'));
 const acknowledgmentPendingTasks = computed(() =>
   tasks.value
@@ -490,6 +540,21 @@ const notificationPermissionText = computed(() => {
     return '已拒绝';
   }
   return '未授权';
+});
+const pushStatusText = computed(() => {
+  if (pushStatus.value === 'unsupported') {
+    return 'Current browser does not support Web Push';
+  }
+  if (pushStatus.value === 'syncing') {
+    return 'Syncing...';
+  }
+  if (pushStatus.value === 'enabled') {
+    return pushSubscriptionId.value ? `Enabled: ${pushSubscriptionId.value}` : 'Enabled';
+  }
+  if (pushStatus.value === 'error') {
+    return 'Error';
+  }
+  return 'Not enabled';
 });
 const ringtoneSourceModeDescription = computed(() => {
   if (ringtoneSourceMode.value === 'uploaded') {
@@ -649,6 +714,7 @@ onMounted(() => {
   triggerDueReminders();
   void syncLoopingSoundLoop();
   void reloadDefaultRingtoneAsset();
+  void refreshPushSubscriptionStatus();
 
   ticker = window.setInterval(() => {
     nowUnix.value = nowUnixSeconds();
@@ -1122,6 +1188,202 @@ async function requestBrowserNotificationPermission(): Promise<void> {
   }
 
   store.showToast('通知权限保持未授权。', 'info');
+}
+
+function resolvePushGithubContextOrThrow(): {
+  githubToken: string;
+  owner: string;
+  repo: string;
+  branch?: string;
+  recordsDir: string;
+} {
+  const githubToken = store.state.githubToken.trim();
+  const owner = store.state.config.githubOwner.trim();
+  const repo = store.state.config.githubRepo.trim();
+  const branch = store.state.config.githubBranch.trim();
+  const recordsDir = store.state.config.githubRecordsDir.trim();
+
+  if (!githubToken || !owner || !repo || !recordsDir) {
+    throw new Error('请先配置 GitHub Token 与 owner/repo/recordsDir。');
+  }
+
+  return {
+    githubToken,
+    owner,
+    repo,
+    branch: branch || undefined,
+    recordsDir,
+  };
+}
+
+function resolveServiceWorkerBaseUrl(): string {
+  return (import.meta.env.BASE_URL || '/').replace(/\/+$/, '/');
+}
+
+async function ensureReminderServiceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
+  if (!pushRuntimeSupported.value) {
+    throw new Error('当前环境不支持 Service Worker 或 PushManager。');
+  }
+
+  const baseUrl = resolveServiceWorkerBaseUrl();
+  let registration = await navigator.serviceWorker.getRegistration(baseUrl);
+  if (!registration) {
+    registration = await navigator.serviceWorker.register(`${baseUrl}sw.js`, { scope: baseUrl });
+  }
+
+  return registration;
+}
+
+async function refreshPushSubscriptionStatus(): Promise<void> {
+  if (!pushRuntimeSupported.value) {
+    pushStatus.value = 'unsupported';
+    pushStatusMessage.value = '';
+    pushSubscriptionId.value = '';
+    return;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.getRegistration(resolveServiceWorkerBaseUrl());
+    if (!registration) {
+      pushStatus.value = 'idle';
+      pushStatusMessage.value = 'Service Worker 尚未就绪，可刷新页面后重试。';
+      pushSubscriptionId.value = '';
+      return;
+    }
+
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      pushStatus.value = 'idle';
+      pushStatusMessage.value = '';
+      pushSubscriptionId.value = '';
+      return;
+    }
+
+    pushStatus.value = 'enabled';
+    pushSubscriptionId.value = '';
+    pushStatusMessage.value = '检测到本机 Push 订阅，可点击“启用锁屏 Push 提醒”完成云端同步。';
+  } catch (error) {
+    pushStatus.value = 'error';
+    pushStatusMessage.value = error instanceof Error ? error.message : '获取 Push 状态失败。';
+  }
+}
+
+async function enableLockscreenPushNotifications(): Promise<void> {
+  if (!canManagePushNotifications.value) {
+    store.showToast('当前环境不支持锁屏 Push 提醒。', 'error');
+    return;
+  }
+
+  pushStatus.value = 'syncing';
+  pushStatusMessage.value = '';
+
+  try {
+    if (notificationPermission.value !== 'granted') {
+      await requestBrowserNotificationPermission();
+    }
+    if (notificationPermission.value !== 'granted') {
+      throw new Error('请先授予通知权限，再启用锁屏 Push 提醒。');
+    }
+
+    const vapidPublicKey = await fetchReminderPushVapidPublicKey(store.state.config);
+    const registration = await ensureReminderServiceWorkerRegistration();
+    let subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      const rawServerKey = urlBase64ToUint8Array(vapidPublicKey);
+      const applicationServerKey = new Uint8Array(rawServerKey.length);
+      applicationServerKey.set(rawServerKey);
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
+    }
+
+    const result = await upsertReminderPushSubscription(
+      store.state.config,
+      resolvePushGithubContextOrThrow(),
+      store.state.deviceMeta.deviceId,
+      serializePushSubscription(subscription),
+    );
+
+    pushStatus.value = 'enabled';
+    pushSubscriptionId.value = result.subscriptionId;
+    pushStatusMessage.value = `已启用并同步到 GitHub：${result.path}`;
+    store.showToast('锁屏 Push 提醒已启用。', 'success');
+  } catch (error) {
+    pushStatus.value = 'error';
+    pushStatusMessage.value = error instanceof Error ? error.message : '启用锁屏 Push 失败。';
+    store.showToast(pushStatusMessage.value, 'error');
+  }
+}
+
+async function disableLockscreenPushNotifications(): Promise<void> {
+  if (!pushRuntimeSupported.value) {
+    store.showToast('当前环境不支持 Push 功能。', 'error');
+    return;
+  }
+
+  pushStatus.value = 'syncing';
+
+  try {
+    const registration = await ensureReminderServiceWorkerRegistration();
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      pushStatus.value = 'idle';
+      pushStatusMessage.value = '当前浏览器没有可关闭的 Push 订阅。';
+      pushSubscriptionId.value = '';
+      return;
+    }
+
+    const serialized = serializePushSubscription(subscription);
+    let remoteMessage = '';
+    try {
+      const result = await removeReminderPushSubscription(
+        store.state.config,
+        resolvePushGithubContextOrThrow(),
+        store.state.deviceMeta.deviceId,
+        {
+          subscriptionId: pushSubscriptionId.value || undefined,
+          endpoint: serialized.endpoint,
+        },
+      );
+      remoteMessage = result.removed ? '云端订阅已删除。' : '云端未找到订阅，已仅移除本地订阅。';
+    } catch (error) {
+      remoteMessage = error instanceof Error ? `远端移除失败：${error.message}` : '远端移除失败。';
+    }
+
+    await subscription.unsubscribe();
+    pushStatus.value = 'idle';
+    pushSubscriptionId.value = '';
+    pushStatusMessage.value = remoteMessage || '锁屏 Push 提醒已关闭。';
+    store.showToast('锁屏 Push 提醒已关闭。', 'success');
+  } catch (error) {
+    pushStatus.value = 'error';
+    pushStatusMessage.value = error instanceof Error ? error.message : '关闭锁屏 Push 失败。';
+    store.showToast(pushStatusMessage.value, 'error');
+  }
+}
+
+async function sendLockscreenPushNotificationTest(): Promise<void> {
+  if (!pushRuntimeSupported.value) {
+    store.showToast('当前环境不支持 Push 功能。', 'error');
+    return;
+  }
+
+  sendingPushTest.value = true;
+  try {
+    const registration = await ensureReminderServiceWorkerRegistration();
+    const subscription = await registration.pushManager.getSubscription();
+    if (!subscription) {
+      throw new Error('请先启用锁屏 Push 提醒。');
+    }
+
+    await sendReminderPushTest(store.state.config, serializePushSubscription(subscription));
+    store.showToast('测试 Push 已发送，请检查通知栏与锁屏效果。', 'success');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : '发送测试 Push 失败。', 'error');
+  } finally {
+    sendingPushTest.value = false;
+  }
 }
 
 function resolveAudioContextCtor(): typeof AudioContext | null {
