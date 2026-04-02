@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "rmd-51faccb1-7894-4e82-bc77-240048901051",
+  "deviceId": "device-62e67c9d-dbe6-4bbd-aa24-abfd254e6730",
+  "kind": "custom",
+  "title": "睡觉",
+  "durationSeconds": 23940,
+  "triggerAtUnix": 1775183472,
+  "scheduleMode": "countdown",
+  "status": "pending",
+  "soundEnabled": true,
+  "notificationEnabled": true,
+  "requiresAcknowledgement": false,
+  "createdAtUnix": 1775159532,
+  "updatedAtUnix": 1775159534,
+  "retryCount": 0,
+  "source": "frontend"
+}
