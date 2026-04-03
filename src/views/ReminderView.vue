@@ -1381,8 +1381,10 @@ async function enableLockscreenPushNotifications(): Promise<void> {
 
   pushStatus.value = 'syncing';
   pushStatusMessage.value = '';
+  let stage = '初始化';
 
   try {
+    stage = '检查通知权限';
     if (notificationPermission.value !== 'granted') {
       await requestBrowserNotificationPermission();
     }
@@ -1390,19 +1392,39 @@ async function enableLockscreenPushNotifications(): Promise<void> {
       throw new Error('请先授予通知权限，再启用锁屏 Push 提醒。');
     }
 
+    stage = '获取 VAPID 公钥';
     const vapidPublicKey = await fetchReminderPushVapidPublicKey(store.state.config);
+    stage = '注册 Service Worker';
     const registration = await ensureReminderServiceWorkerRegistration();
+    await navigator.serviceWorker.ready;
+
+    stage = '获取本地 Push 订阅';
     let subscription = await registration.pushManager.getSubscription();
     if (!subscription) {
+      stage = '创建浏览器 Push 订阅';
       const rawServerKey = urlBase64ToUint8Array(vapidPublicKey);
       const applicationServerKey = new Uint8Array(rawServerKey.length);
       applicationServerKey.set(rawServerKey);
-      subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey,
-      });
+      try {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey,
+        });
+      } catch (error) {
+        const name =
+          error instanceof DOMException
+            ? error.name
+            : error instanceof Error && error.name
+              ? error.name
+              : 'UnknownError';
+        const message = error instanceof Error ? error.message : 'unknown reason';
+        throw new Error(
+          `浏览器 Push 订阅失败（${name}）：${message}。通常是浏览器无法连接 Push 服务（Chrome 依赖 FCM）或被网络/扩展策略拦截。`,
+        );
+      }
     }
 
+    stage = '同步订阅到后端';
     const result = await upsertReminderPushSubscription(
       store.state.config,
       resolvePushGithubContextOrThrow(),
@@ -1417,7 +1439,8 @@ async function enableLockscreenPushNotifications(): Promise<void> {
     void syncPendingReminderTasksToCloud();
   } catch (error) {
     pushStatus.value = 'error';
-    pushStatusMessage.value = error instanceof Error ? error.message : '启用锁屏 Push 失败。';
+    const detail = error instanceof Error ? error.message : '启用锁屏 Push 失败。';
+    pushStatusMessage.value = `启用失败（阶段：${stage}）：${detail}`;
     store.showToast(pushStatusMessage.value, 'error');
   }
 }

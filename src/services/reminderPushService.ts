@@ -24,6 +24,8 @@ export interface ReminderPushSubscriptionSyncResult {
   updatedAtUnix: number;
 }
 
+const PUSH_REQUEST_TIMEOUT_MS = 15000;
+
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.trim().replace(/\/+$/, '');
 }
@@ -69,6 +71,31 @@ function normalizeGithubContext(context: ReminderPushGithubContext): ReminderPus
 
 function parseJsonErrorFallback(response: Response): string {
   return `请求失败（HTTP ${response.status}）。`;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs = PUSH_REQUEST_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error('Push 请求超时，请检查后端连通性后重试。');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutHandle);
+  }
 }
 
 async function parseResponseOrThrow<T>(response: Response, fallbackMessage: string): Promise<T> {
@@ -118,7 +145,7 @@ export async function fetchReminderPushVapidPublicKey(
   config: Pick<AppConfig, 'reminderApiBaseUrl' | 'reminderApiFallbackBaseUrl'>,
 ): Promise<string> {
   const backendBaseUrl = resolveBackendBaseUrl(config);
-  const response = await fetch(`${backendBaseUrl}/api/push/vapid-public-key`, {
+  const response = await fetchWithTimeout(`${backendBaseUrl}/api/push/vapid-public-key`, {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -146,7 +173,7 @@ export async function upsertReminderPushSubscription(
     throw new Error('设备 ID 无效。');
   }
 
-  const response = await fetch(`${backendBaseUrl}/api/push/subscriptions/upsert`, {
+  const response = await fetchWithTimeout(`${backendBaseUrl}/api/push/subscriptions/upsert`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -198,7 +225,7 @@ export async function removeReminderPushSubscription(
     throw new Error('订阅移除参数无效。');
   }
 
-  const response = await fetch(`${backendBaseUrl}/api/push/subscriptions/remove`, {
+  const response = await fetchWithTimeout(`${backendBaseUrl}/api/push/subscriptions/remove`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -239,7 +266,7 @@ export async function sendReminderPushTest(
 ): Promise<void> {
   const backendBaseUrl = resolveBackendBaseUrl(config);
 
-  const response = await fetch(`${backendBaseUrl}/api/push/test-send`, {
+  const response = await fetchWithTimeout(`${backendBaseUrl}/api/push/test-send`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
