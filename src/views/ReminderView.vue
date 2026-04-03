@@ -1325,6 +1325,25 @@ function resolveServiceWorkerBaseUrl(): string {
   return (import.meta.env.BASE_URL || '/').replace(/\/+$/, '/');
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+async function waitForActiveServiceWorker(baseUrl: string, timeoutMs = 12000): Promise<ServiceWorkerRegistration> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeoutMs) {
+    const current = await navigator.serviceWorker.getRegistration(baseUrl);
+    if (current?.active) {
+      return current;
+    }
+    await sleep(200);
+  }
+
+  throw new Error('Service Worker 已注册但未在预期时间内激活，请刷新页面后重试。');
+}
+
 async function ensureReminderServiceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
   if (!pushRuntimeSupported.value) {
     throw new Error('当前环境不支持 Service Worker 或 PushManager。');
@@ -1336,7 +1355,18 @@ async function ensureReminderServiceWorkerRegistration(): Promise<ServiceWorkerR
     registration = await navigator.serviceWorker.register(`${baseUrl}sw.js`, { scope: baseUrl });
   }
 
-  return registration;
+  if (registration.active) {
+    return registration;
+  }
+
+  try {
+    await registration.update();
+  } catch {
+    // Ignore transient update failures and continue waiting for activation.
+  }
+
+  // PushManager.subscribe requires an active service worker.
+  return waitForActiveServiceWorker(baseUrl);
 }
 
 async function refreshPushSubscriptionStatus(): Promise<void> {
@@ -1396,7 +1426,6 @@ async function enableLockscreenPushNotifications(): Promise<void> {
     const vapidPublicKey = await fetchReminderPushVapidPublicKey(store.state.config);
     stage = '注册 Service Worker';
     const registration = await ensureReminderServiceWorkerRegistration();
-    await navigator.serviceWorker.ready;
 
     stage = '获取本地 Push 订阅';
     let subscription = await registration.pushManager.getSubscription();
