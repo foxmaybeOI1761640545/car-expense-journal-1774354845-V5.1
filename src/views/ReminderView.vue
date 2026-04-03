@@ -1331,6 +1331,24 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutErrorMessage: string): Promise<T> {
+  let timeoutHandle = 0;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutHandle = window.setTimeout(() => {
+          reject(new Error(timeoutErrorMessage));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 async function waitForActiveServiceWorker(baseUrl: string, timeoutMs = 12000): Promise<ServiceWorkerRegistration> {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
@@ -1435,10 +1453,14 @@ async function enableLockscreenPushNotifications(): Promise<void> {
       const applicationServerKey = new Uint8Array(rawServerKey.length);
       applicationServerKey.set(rawServerKey);
       try {
-        subscription = await registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey,
-        });
+        subscription = await withTimeout(
+          registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey,
+          }),
+          20000,
+          '浏览器 Push 订阅超时（20s），通常是浏览器 Push 服务链路受阻。',
+        );
       } catch (error) {
         const name =
           error instanceof DOMException
