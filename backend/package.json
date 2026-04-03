@@ -8,6 +8,7 @@
     "dev": "node --watch src/server.mjs"
   },
   "dependencies": {
+    "dotenv": "^17.4.0",
     "web-push": "^3.6.7"
   }
 }

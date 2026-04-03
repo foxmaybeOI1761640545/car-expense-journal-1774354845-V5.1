@@ -55,11 +55,17 @@ npm run dev
 提醒中心支持配置后端探活地址（页面设置中的 `reminderApiBaseUrl`）。仓库已内置一个最小后端骨架：
 
 ```bash
+cp backend/.env.example backend/.env
 cd backend
 npm run start
 ```
 
 默认监听：`http://localhost:18080`
+
+如果要启用锁屏 Push，请先在 `backend/.env` 填写：
+- `VAPID_PUBLIC_KEY`
+- `VAPID_PRIVATE_KEY`
+- `VAPID_SUBJECT`
 
 可用接口：
 - `GET /healthz`

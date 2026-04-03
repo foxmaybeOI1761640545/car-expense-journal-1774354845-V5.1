@@ -54,6 +54,20 @@ npx web-push generate-vapid-keys
 
 `VAPID_SUBJECT` 参考：`mailto:you@example.com`
 
+### 2.4 本地调试时写到哪里
+当前后端会在启动时自动读取以下文件（后者覆盖前者）：
+- `backend/.env`
+- `backend/.env.local`
+
+快速开始：
+```powershell
+Copy-Item backend/.env.example backend/.env
+```
+然后把 `backend/.env` 里的这三项替换成你的真实值：
+- `VAPID_PUBLIC_KEY`
+- `VAPID_PRIVATE_KEY`
+- `VAPID_SUBJECT`
+
 ## 3. Render 部署流程（新后端）
 ### 3.1 新建 Web Service
 - `New` -> `Web Service`

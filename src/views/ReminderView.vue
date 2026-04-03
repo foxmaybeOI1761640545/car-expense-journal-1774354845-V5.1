@@ -149,7 +149,7 @@
           <button class="btn btn--ghost" type="button" :disabled="!customRingtoneConfig" @click="clearCustomRingtone">清除上传铃声</button>
           <input ref="ringtoneInputRef" class="visually-hidden" type="file" :accept="ringtoneFileAccept" @change="handleRingtoneFileChange" />
         </div>
-        <p class="hint">上传限制：仅允许常见音频格式（mp3/wav/ogg/m4a/aac/flac/opus/webm/mp4），最大 1.5MB。</p>
+        <p class="hint">上传限制：仅允许常见音频格式（mp3/wav/ogg/m4a/aac/flac/opus/webm/mp4），最大 100MB（大文件自动走本地数据库存储）。</p>
         <section class="reminder-subsection">
           <h3>DIY 合成铃声（数字编辑）</h3>
           <div class="form-grid reminder-synth-grid">
@@ -342,6 +342,15 @@ import {
 import { loadReminderDefaultAudioAsset, type ReminderResolvedDefaultAudioAsset } from '../services/reminderAudioAssetService';
 import { resolveReminderBackendBaseUrl } from '../services/reminderBackendUrlService';
 import { pingReminderBackend, type ReminderBackendPingResult } from '../services/reminderBackendService';
+import {
+  MAX_REMINDER_RINGTONE_UPLOAD_BYTES,
+  removeReminderRingtoneBlob,
+  resolveReminderRingtoneDataUrl,
+  resolveReminderRingtoneSource,
+  saveDataUrlAsReminderRingtoneBlob,
+  saveReminderRingtoneBlob,
+  shouldPersistRingtoneAsBlob,
+} from '../services/reminderRingtoneBlobStoreService';
 import { cancelReminderInCloud, upsertReminderToCloud } from '../services/reminderCloudService';
 import {
   fetchReminderPushVapidPublicKey,
@@ -374,7 +383,7 @@ import { useAppStore } from '../stores/appStore';
 import type { ReminderRingtoneConfig, ReminderRingtoneSourceMode, ReminderSynthPatternConfig, ReminderTask } from '../types/reminder';
 import { nowUnixSeconds, parseDateTimeLocalToUnix, toLocalDateTime, unixSecondsToIsoString } from '../utils/date';
 
-const MAX_RINGTONE_BYTES = 1_500_000;
+const MAX_RINGTONE_BYTES = MAX_REMINDER_RINGTONE_UPLOAD_BYTES;
 const RINGTONE_FILE_ACCEPT =
   'audio/mpeg,audio/mp3,audio/wav,audio/x-wav,audio/ogg,audio/webm,audio/mp4,audio/aac,audio/flac,audio/x-flac,audio/opus,.mp3,.wav,.ogg,.m4a,.aac,.flac,.opus,.webm,.mp4,.aiff';
 
@@ -456,6 +465,7 @@ const customTimeRepeatManualInput = ref('');
 const notificationPermission = ref<'unsupported' | NotificationPermission>(getNotificationPermission());
 const soundPrimed = ref(false);
 const customRingtoneConfig = ref<ReminderRingtoneConfig | null>(loadReminderRingtoneConfig());
+const customRingtoneSourceUrl = ref('');
 const ringtoneSourceMode = ref<ReminderRingtoneSourceMode>(loadReminderRingtoneSourceMode());
 const synthPatternConfig = ref<ReminderSynthPatternConfig>(loadReminderSynthPatternConfig());
 const synthWaveformInput = ref<OscillatorType>(synthPatternConfig.value.waveform);
@@ -655,6 +665,7 @@ let ringtoneFallbackHintShown = false;
 let loopStartInProgress: Promise<void> | null = null;
 let loopAudioElement: HTMLAudioElement | null = null;
 let syntheticLoopTimer: number | null = null;
+let customRingtoneSourceRelease: (() => void) | null = null;
 const inFlightDueIds = new Set<string>();
 
 watch(
@@ -708,6 +719,37 @@ watch(
   { immediate: false },
 );
 
+function releaseCustomRingtoneSourceUrl(): void {
+  if (!customRingtoneSourceRelease) {
+    return;
+  }
+  customRingtoneSourceRelease();
+  customRingtoneSourceRelease = null;
+}
+
+async function refreshCustomRingtoneSourceUrl(): Promise<void> {
+  releaseCustomRingtoneSourceUrl();
+  customRingtoneSourceUrl.value = '';
+
+  const resolved = await resolveReminderRingtoneSource(customRingtoneConfig.value);
+  customRingtoneSourceUrl.value = resolved.sourceUrl ?? '';
+  customRingtoneSourceRelease = resolved.release;
+}
+
+watch(
+  customRingtoneConfig,
+  (next, previous) => {
+    void refreshCustomRingtoneSourceUrl().catch(() => undefined);
+
+    const previousBlobStorageId = previous?.storageMode === 'idb-blob' ? previous.blobStorageId?.trim() || '' : '';
+    const nextBlobStorageId = next?.storageMode === 'idb-blob' ? next.blobStorageId?.trim() || '' : '';
+    if (previousBlobStorageId && previousBlobStorageId !== nextBlobStorageId) {
+      void removeReminderRingtoneBlob(previousBlobStorageId).catch(() => undefined);
+    }
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   syncMobileLayoutState();
   syncSynthInputsFromConfig(synthPatternConfig.value);
@@ -734,6 +776,7 @@ onBeforeUnmount(() => {
   }
 
   stopLoopingSound();
+  releaseCustomRingtoneSourceUrl();
   document.removeEventListener('visibilitychange', handleVisibilityChange);
   window.removeEventListener('resize', handleViewportResize);
 });
@@ -1697,6 +1740,27 @@ function parseMimeTypeFromDataUrl(dataUrl: string): string | null {
   return match ? match[1].toLowerCase() : null;
 }
 
+function estimateDataUrlBytes(dataUrl: string): number {
+  const normalized = dataUrl.trim();
+  const separatorIndex = normalized.indexOf(',');
+  if (separatorIndex < 0) {
+    return 0;
+  }
+
+  const base64 = normalized.slice(separatorIndex + 1).replace(/\s+/g, '');
+  if (!base64) {
+    return 0;
+  }
+
+  let padding = 0;
+  if (base64.endsWith('==')) {
+    padding = 2;
+  } else if (base64.endsWith('=')) {
+    padding = 1;
+  }
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
 function validateRingtoneUploadFile(file: File): string {
   const extension = getFileExtension(file.name);
   const mimeType = file.type.trim().toLowerCase();
@@ -1705,7 +1769,7 @@ function validateRingtoneUploadFile(file: File): string {
     throw new Error(`不支持的文件类型：.${extension}`);
   }
   if (file.size > MAX_RINGTONE_BYTES) {
-    throw new Error('铃声文件过大，请控制在 1.5MB 以内。');
+    throw new Error('铃声文件过大，请控制在 100MB 以内。');
   }
   if (mimeType && !mimeType.startsWith('audio/')) {
     throw new Error('仅支持音频文件，请重新选择。');
@@ -1755,24 +1819,52 @@ async function handleRingtoneFileChange(event: Event): Promise<void> {
 
   try {
     const fallbackMimeType = validateRingtoneUploadFile(file);
-    const dataUrl = await readFileAsDataUrl(file);
-    const detectedMimeType = parseMimeTypeFromDataUrl(dataUrl);
-    const mimeType = detectedMimeType && detectedMimeType.startsWith('audio/') ? detectedMimeType : fallbackMimeType;
+    const name = file.name.trim().slice(0, 120) || 'custom-ringtone';
+    const updatedAtUnix = nowUnixSeconds();
+    let config: ReminderRingtoneConfig;
+    let successMessage = '';
 
-    const config: ReminderRingtoneConfig = {
-      name: file.name.trim().slice(0, 120) || 'custom-ringtone',
-      mimeType,
-      dataUrl,
-      updatedAtUnix: nowUnixSeconds(),
-      githubPath: undefined,
-      githubSyncedAtUnix: undefined,
-    };
+    if (shouldPersistRingtoneAsBlob(file.size)) {
+      const stored = await saveReminderRingtoneBlob({
+        blob: file,
+        mimeType: fallbackMimeType,
+        name,
+        updatedAtUnix,
+      });
+      config = {
+        name,
+        mimeType: fallbackMimeType,
+        storageMode: 'idb-blob',
+        blobStorageId: stored.blobStorageId,
+        sizeBytes: stored.sizeBytes,
+        updatedAtUnix,
+        githubPath: undefined,
+        githubSyncedAtUnix: undefined,
+      };
+      successMessage = `自定义铃声已更新：${config.name}（大文件模式）`;
+    } else {
+      const dataUrl = await readFileAsDataUrl(file);
+      const detectedMimeType = parseMimeTypeFromDataUrl(dataUrl);
+      const mimeType = detectedMimeType && detectedMimeType.startsWith('audio/') ? detectedMimeType : fallbackMimeType;
+      config = {
+        name,
+        mimeType,
+        storageMode: 'data-url',
+        dataUrl,
+        sizeBytes: file.size,
+        updatedAtUnix,
+        githubPath: undefined,
+        githubSyncedAtUnix: undefined,
+      };
+      successMessage = `自定义铃声已更新：${config.name}`;
+    }
+
     saveReminderRingtoneConfig(config);
     customRingtoneConfig.value = config;
     githubSyncStatus.value = 'idle';
     githubSyncMessage.value = '';
     soundBlockedHintShown = false;
-    store.showToast(`自定义铃声已更新：${config.name}`, 'success');
+    store.showToast(successMessage, 'success');
     stopLoopingSound();
     void syncLoopingSoundLoop();
   } catch (error) {
@@ -1796,13 +1888,14 @@ function clearCustomRingtone(): void {
 
 function resolveRingtoneTarget(): ActiveRingtoneTarget {
   const uploaded = customRingtoneConfig.value;
+  const uploadedSourceUrl = customRingtoneSourceUrl.value;
   const defaultReady = defaultAudioStatus.value === 'ready' ? defaultAudioAsset.value : null;
 
   if (ringtoneSourceMode.value === 'uploaded') {
-    if (uploaded) {
+    if (uploaded && uploadedSourceUrl) {
       return {
         kind: 'uploaded',
-        sourceUrl: uploaded.dataUrl,
+        sourceUrl: uploadedSourceUrl,
         label: `上传铃声：${uploaded.name}`,
       };
     }
@@ -1835,10 +1928,10 @@ function resolveRingtoneTarget(): ActiveRingtoneTarget {
     };
   }
 
-  if (uploaded) {
+  if (uploaded && uploadedSourceUrl) {
     return {
       kind: 'uploaded',
-      sourceUrl: uploaded.dataUrl,
+      sourceUrl: uploadedSourceUrl,
       label: `上传铃声：${uploaded.name}`,
     };
   }
@@ -2091,11 +2184,12 @@ async function syncCustomRingtoneToGithub(): Promise<void> {
     const synth = synthPatternConfig.value;
 
     if (current) {
+      const dataUrl = await resolveReminderRingtoneDataUrl(current);
       const result = await uploadReminderRingtoneToGithub(
         {
           fileName: current.name,
           mimeType: current.mimeType,
-          dataUrl: current.dataUrl,
+          dataUrl,
           sourceMode: ringtoneSourceMode.value,
           defaultFile,
           synth,
@@ -2174,14 +2268,37 @@ async function syncCustomRingtoneFromGithub(): Promise<void> {
         token,
         remoteConfig.uploaded.mimeType,
       );
-      const pulledConfig: ReminderRingtoneConfig = {
-        name: remoteConfig.uploaded.name,
-        mimeType: remoteConfig.uploaded.mimeType,
-        dataUrl,
-        updatedAtUnix: nowUnixSeconds(),
-        githubPath: remoteConfig.uploaded.path,
-        githubSyncedAtUnix: nowUnixSeconds(),
-      };
+      const updatedAtUnix = nowUnixSeconds();
+      let pulledConfig: ReminderRingtoneConfig;
+      if (shouldPersistRingtoneAsBlob(estimateDataUrlBytes(dataUrl))) {
+        const stored = await saveDataUrlAsReminderRingtoneBlob({
+          dataUrl,
+          mimeType: remoteConfig.uploaded.mimeType,
+          name: remoteConfig.uploaded.name,
+          updatedAtUnix,
+        });
+        pulledConfig = {
+          name: remoteConfig.uploaded.name,
+          mimeType: remoteConfig.uploaded.mimeType,
+          storageMode: 'idb-blob',
+          blobStorageId: stored.blobStorageId,
+          sizeBytes: stored.sizeBytes,
+          updatedAtUnix,
+          githubPath: remoteConfig.uploaded.path,
+          githubSyncedAtUnix: updatedAtUnix,
+        };
+      } else {
+        pulledConfig = {
+          name: remoteConfig.uploaded.name,
+          mimeType: remoteConfig.uploaded.mimeType,
+          storageMode: 'data-url',
+          dataUrl,
+          sizeBytes: estimateDataUrlBytes(dataUrl),
+          updatedAtUnix,
+          githubPath: remoteConfig.uploaded.path,
+          githubSyncedAtUnix: updatedAtUnix,
+        };
+      }
       saveReminderRingtoneConfig(pulledConfig);
       customRingtoneConfig.value = pulledConfig;
       pulledParts.push('上传铃声');

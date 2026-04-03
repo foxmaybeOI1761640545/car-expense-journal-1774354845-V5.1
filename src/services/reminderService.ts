@@ -432,23 +432,47 @@ function sanitizeReminderRingtoneConfig(raw: unknown): ReminderRingtoneConfig | 
   }
 
   const value = raw as Partial<ReminderRingtoneConfig>;
-  if (typeof value.name !== 'string' || typeof value.mimeType !== 'string' || typeof value.dataUrl !== 'string') {
+  if (typeof value.name !== 'string' || typeof value.mimeType !== 'string') {
     return null;
   }
 
   const name = value.name.trim().slice(0, 120);
   const mimeType = value.mimeType.trim().toLowerCase().slice(0, 100);
-  const dataUrl = value.dataUrl.trim();
+  const storageMode = value.storageMode === 'idb-blob' ? 'idb-blob' : 'data-url';
+  const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl.trim() : '';
+  const blobStorageId = typeof value.blobStorageId === 'string' ? value.blobStorageId.trim().slice(0, 120) : '';
+  const sizeBytesRaw = Number(value.sizeBytes);
+  const sizeBytes = Number.isFinite(sizeBytesRaw) && sizeBytesRaw >= 0 ? Math.floor(sizeBytesRaw) : undefined;
   const updatedAtUnix = clampUnixSeconds(value.updatedAtUnix, nowUnixSeconds());
   const githubPath = typeof value.githubPath === 'string' ? value.githubPath.trim().slice(0, 400) : undefined;
   const githubSyncedAtUnix =
     value.githubSyncedAtUnix === undefined ? undefined : clampUnixSeconds(value.githubSyncedAtUnix, updatedAtUnix);
 
-  if (!name || !mimeType || !dataUrl) {
+  if (!name || !mimeType) {
     return null;
   }
 
   if (!mimeType.startsWith('audio/')) {
+    return null;
+  }
+
+  if (storageMode === 'idb-blob') {
+    if (!blobStorageId) {
+      return null;
+    }
+    return {
+      name,
+      mimeType,
+      storageMode,
+      blobStorageId,
+      sizeBytes,
+      updatedAtUnix,
+      githubPath: githubPath || undefined,
+      githubSyncedAtUnix: Number.isFinite(githubSyncedAtUnix) ? githubSyncedAtUnix : undefined,
+    };
+  }
+
+  if (!dataUrl) {
     return null;
   }
 
@@ -459,7 +483,9 @@ function sanitizeReminderRingtoneConfig(raw: unknown): ReminderRingtoneConfig | 
   return {
     name,
     mimeType,
+    storageMode: 'data-url',
     dataUrl,
+    sizeBytes,
     updatedAtUnix,
     githubPath: githubPath || undefined,
     githubSyncedAtUnix: Number.isFinite(githubSyncedAtUnix) ? githubSyncedAtUnix : undefined,

@@ -1,6 +1,14 @@
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { config as loadEnvFile } from 'dotenv';
 import webpush from 'web-push';
+
+const CURRENT_DIR = path.dirname(fileURLToPath(import.meta.url));
+const BACKEND_ROOT_DIR = path.resolve(CURRENT_DIR, '..');
+loadEnvFile({ path: path.join(BACKEND_ROOT_DIR, '.env'), quiet: true });
+loadEnvFile({ path: path.join(BACKEND_ROOT_DIR, '.env.local'), override: true, quiet: true });
 
 const SERVICE_NAME = 'car-journal-reminder-backend';
 const GITHUB_API_BASE = 'https://api.github.com';

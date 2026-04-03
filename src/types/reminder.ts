@@ -4,6 +4,7 @@ export type ReminderStatus = 'pending' | 'fired' | 'cancelled';
 export type ReminderScheduleMode = 'countdown' | 'date-time';
 
 export type ReminderRingtoneSourceMode = 'auto' | 'uploaded' | 'default-file' | 'synth';
+export type ReminderRingtoneStorageMode = 'data-url' | 'idb-blob';
 
 export interface ReminderTask {
   id: string;
@@ -41,7 +42,10 @@ export interface CreateReminderTaskInput {
 export interface ReminderRingtoneConfig {
   name: string;
   mimeType: string;
-  dataUrl: string;
+  storageMode?: ReminderRingtoneStorageMode;
+  dataUrl?: string;
+  blobStorageId?: string;
+  sizeBytes?: number;
   updatedAtUnix: number;
   githubPath?: string;
   githubSyncedAtUnix?: number;

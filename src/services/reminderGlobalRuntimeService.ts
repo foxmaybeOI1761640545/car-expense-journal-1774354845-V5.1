@@ -2,6 +2,7 @@ import { useAppStore } from '../stores/appStore';
 import type { ReminderSynthPatternConfig, ReminderTask } from '../types/reminder';
 import { nowUnixSeconds } from '../utils/date';
 import { loadReminderDefaultAudioAsset, type ReminderResolvedDefaultAudioAsset } from './reminderAudioAssetService';
+import { resolveReminderRingtoneSource } from './reminderRingtoneBlobStoreService';
 import {
   acknowledgeReminderTask,
   createReminderTask,
@@ -20,6 +21,7 @@ interface RuntimeRingtoneTarget {
   kind: RuntimeTargetKind;
   label: string;
   sourceUrl?: string;
+  releaseSource?: () => void;
   fallbackReason?: string;
   synthConfig: ReminderSynthPatternConfig;
 }
@@ -33,6 +35,7 @@ let inFlightDueIds = new Set<string>();
 
 let audioContext: AudioContext | null = null;
 let loopAudioElement: HTMLAudioElement | null = null;
+let loopAudioSourceRelease: (() => void) | null = null;
 let syntheticLoopTimer: number | null = null;
 let loopStartInProgress: Promise<void> | null = null;
 
@@ -227,6 +230,10 @@ function stopLoopingSound(): void {
     cleanupAudioElement(loopAudioElement);
     loopAudioElement = null;
   }
+  if (loopAudioSourceRelease) {
+    loopAudioSourceRelease();
+    loopAudioSourceRelease = null;
+  }
 
   if (syntheticLoopTimer !== null) {
     clearInterval(syntheticLoopTimer);
@@ -286,21 +293,24 @@ async function ensureDefaultAudioAssetReady(force = false): Promise<void> {
   defaultAudioAssetCheckedAtUnix = now;
 }
 
-function resolveRingtoneTarget(): RuntimeRingtoneTarget {
+async function resolveRingtoneTarget(): Promise<RuntimeRingtoneTarget> {
   const sourceMode = loadReminderRingtoneSourceMode();
   const uploaded = loadReminderRingtoneConfig();
+  const uploadedSource = await resolveReminderRingtoneSource(uploaded);
   const synthConfig = loadReminderSynthPatternConfig();
   const defaultReady = defaultAudioAsset;
 
   if (sourceMode === 'uploaded') {
-    if (uploaded) {
+    if (uploaded && uploadedSource.sourceUrl) {
       return {
         kind: 'uploaded',
-        sourceUrl: uploaded.dataUrl,
+        sourceUrl: uploadedSource.sourceUrl,
+        releaseSource: uploadedSource.release,
         label: `uploaded: ${uploaded.name}`,
         synthConfig,
       };
     }
+    uploadedSource.release();
 
     return {
       kind: 'synth',
@@ -311,6 +321,7 @@ function resolveRingtoneTarget(): RuntimeRingtoneTarget {
   }
 
   if (sourceMode === 'default-file') {
+    uploadedSource.release();
     if (defaultReady) {
       return {
         kind: 'default-file',
@@ -329,6 +340,7 @@ function resolveRingtoneTarget(): RuntimeRingtoneTarget {
   }
 
   if (sourceMode === 'synth') {
+    uploadedSource.release();
     return {
       kind: 'synth',
       label: 'synth',
@@ -336,14 +348,16 @@ function resolveRingtoneTarget(): RuntimeRingtoneTarget {
     };
   }
 
-  if (uploaded) {
+  if (uploaded && uploadedSource.sourceUrl) {
     return {
       kind: 'uploaded',
-      sourceUrl: uploaded.dataUrl,
+      sourceUrl: uploadedSource.sourceUrl,
+      releaseSource: uploadedSource.release,
       label: `uploaded: ${uploaded.name}`,
       synthConfig,
     };
   }
+  uploadedSource.release();
 
   if (defaultReady) {
     return {
@@ -376,6 +390,7 @@ function notifyRingtoneFallbackIfNeeded(target: RuntimeRingtoneTarget): void {
 
 async function startLoopingForTarget(target: RuntimeRingtoneTarget): Promise<void> {
   if (target.kind === 'synth') {
+    target.releaseSource?.();
     await playSyntheticToneOnce(target.synthConfig);
     const intervalMs = getSynthLoopIntervalMs(target.synthConfig);
     syntheticLoopTimer = window.setInterval(() => {
@@ -387,13 +402,24 @@ async function startLoopingForTarget(target: RuntimeRingtoneTarget): Promise<voi
   }
 
   if (!target.sourceUrl) {
+    target.releaseSource?.();
     throw new Error('Ringtone source URL is invalid.');
   }
 
   const audio = new Audio(target.sourceUrl);
   audio.preload = 'auto';
   audio.loop = true;
-  await audio.play();
+  try {
+    await audio.play();
+  } catch (error) {
+    target.releaseSource?.();
+    throw error;
+  }
+  if (loopAudioSourceRelease) {
+    loopAudioSourceRelease();
+    loopAudioSourceRelease = null;
+  }
+  loopAudioSourceRelease = target.releaseSource ?? null;
   loopAudioElement = audio;
 }
 
@@ -412,7 +438,7 @@ async function startLoopingSound(): Promise<void> {
     try {
       stopLoopingSound();
       await ensureDefaultAudioAssetReady();
-      target = resolveRingtoneTarget();
+      target = await resolveRingtoneTarget();
       notifyRingtoneFallbackIfNeeded(target);
       await startLoopingForTarget(target);
       soundBlockedHintShown = false;

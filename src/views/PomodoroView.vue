@@ -139,6 +139,7 @@ import {
   submitPomodoroStageSettingsToGithub,
 } from '../services/githubService';
 import { loadReminderDefaultAudioAsset } from '../services/reminderAudioAssetService';
+import { resolveReminderRingtoneSource } from '../services/reminderRingtoneBlobStoreService';
 import {
   loadPomodoroStageSettings,
   savePomodoroStageSettings,
@@ -159,6 +160,7 @@ type PomodoroRingtoneTargetKind = 'uploaded' | 'default-file' | 'synth';
 interface PomodoroRingtoneTarget {
   kind: PomodoroRingtoneTargetKind;
   sourceUrl?: string;
+  releaseSource?: () => void;
   synthConfig: ReminderSynthPatternConfig;
   fallbackReason?: string;
 }
@@ -640,17 +642,20 @@ function notifyRingtoneFallbackIfNeeded(target: PomodoroRingtoneTarget): void {
 async function resolvePomodoroRingtoneTarget(): Promise<PomodoroRingtoneTarget> {
   const sourceMode = loadReminderRingtoneSourceMode();
   const uploaded = loadReminderRingtoneConfig();
+  const uploadedSource = await resolveReminderRingtoneSource(uploaded);
   const synthConfig = loadReminderSynthPatternConfig();
   const defaultAudioAsset = await loadReminderDefaultAudioAsset();
 
   if (sourceMode === 'uploaded') {
-    if (uploaded) {
+    if (uploaded && uploadedSource.sourceUrl) {
       return {
         kind: 'uploaded',
-        sourceUrl: uploaded.dataUrl,
+        sourceUrl: uploadedSource.sourceUrl,
+        releaseSource: uploadedSource.release,
         synthConfig,
       };
     }
+    uploadedSource.release();
 
     return {
       kind: 'synth',
@@ -660,6 +665,7 @@ async function resolvePomodoroRingtoneTarget(): Promise<PomodoroRingtoneTarget> 
   }
 
   if (sourceMode === 'default-file') {
+    uploadedSource.release();
     if (defaultAudioAsset) {
       return {
         kind: 'default-file',
@@ -676,19 +682,22 @@ async function resolvePomodoroRingtoneTarget(): Promise<PomodoroRingtoneTarget> 
   }
 
   if (sourceMode === 'synth') {
+    uploadedSource.release();
     return {
       kind: 'synth',
       synthConfig,
     };
   }
 
-  if (uploaded) {
+  if (uploaded && uploadedSource.sourceUrl) {
     return {
       kind: 'uploaded',
-      sourceUrl: uploaded.dataUrl,
+      sourceUrl: uploadedSource.sourceUrl,
+      releaseSource: uploadedSource.release,
       synthConfig,
     };
   }
+  uploadedSource.release();
 
   if (defaultAudioAsset) {
     return {
@@ -708,21 +717,25 @@ async function playCompletionTone(): Promise<void> {
   const target = await resolvePomodoroRingtoneTarget();
   notifyRingtoneFallbackIfNeeded(target);
 
-  if (target.kind === 'synth') {
-    await playSyntheticToneOnce(target.synthConfig);
-    return;
-  }
-
-  if (!target.sourceUrl) {
-    await playSyntheticToneOnce(target.synthConfig);
-    return;
-  }
-
   try {
-    await playAudioSourceOnce(target.sourceUrl);
-  } catch {
-    await playSyntheticToneOnce(target.synthConfig);
-    store.showToast('文件铃声播放失败，已回退到合成铃声。', 'info');
+    if (target.kind === 'synth') {
+      await playSyntheticToneOnce(target.synthConfig);
+      return;
+    }
+
+    if (!target.sourceUrl) {
+      await playSyntheticToneOnce(target.synthConfig);
+      return;
+    }
+
+    try {
+      await playAudioSourceOnce(target.sourceUrl);
+    } catch {
+      await playSyntheticToneOnce(target.synthConfig);
+      store.showToast('文件铃声播放失败，已回退到合成铃声。', 'info');
+    }
+  } finally {
+    target.releaseSource?.();
   }
 }
 
