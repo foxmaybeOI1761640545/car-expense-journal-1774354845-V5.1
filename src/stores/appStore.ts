@@ -61,6 +61,8 @@ interface TripRecordInput {
   averageFuelConsumptionPer100Km: number;
   distanceKm: number;
   pricePerLiter: number;
+  dashboardImagePath?: string;
+  dashboardImageUrl?: string;
   startLocation?: string;
   endLocation?: string;
   note?: string;
@@ -574,6 +576,8 @@ function sanitizeRecord(raw: unknown, targetKey: string | null): AppRecord | nul
     consumedFuelLiters: roundTo(consumed, 3),
     pricePerLiter: normalizedPricePerLiter,
     totalFuelCostCny: normalizedTotalFuelCostCny,
+    dashboardImagePath: typeof record.dashboardImagePath === 'string' ? normalizeOptionalText(record.dashboardImagePath) : undefined,
+    dashboardImageUrl: typeof record.dashboardImageUrl === 'string' ? normalizeOptionalText(record.dashboardImageUrl) : undefined,
     startLocation: typeof record.startLocation === 'string' ? record.startLocation : undefined,
     endLocation: typeof record.endLocation === 'string' ? record.endLocation : undefined,
     note: typeof record.note === 'string' ? record.note : undefined,
@@ -1164,6 +1168,8 @@ function addTripRecord(input: TripRecordInput): TripRecord {
     consumedFuelLiters,
     pricePerLiter: roundTo(price, 2),
     totalFuelCostCny,
+    dashboardImagePath: normalizeOptionalText(input.dashboardImagePath),
+    dashboardImageUrl: normalizeOptionalText(input.dashboardImageUrl),
     startLocation: input.startLocation?.trim() || undefined,
     endLocation: input.endLocation?.trim() || undefined,
     note: input.note?.trim() || undefined,
@@ -1287,6 +1293,9 @@ function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecor
     occurredAtUnix: input.occurredAtUnix,
     fallbackUnix: current.createdAtUnix,
   });
+  const dashboardImagePath =
+    input.dashboardImagePath === undefined ? current.dashboardImagePath : normalizeOptionalText(input.dashboardImagePath);
+  const dashboardImageUrl = input.dashboardImageUrl === undefined ? current.dashboardImageUrl : normalizeOptionalText(input.dashboardImageUrl);
 
   const next: TripRecord = {
     ...current,
@@ -1301,6 +1310,8 @@ function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecor
     consumedFuelLiters,
     pricePerLiter: roundTo(price, 2),
     totalFuelCostCny,
+    dashboardImagePath,
+    dashboardImageUrl,
     startLocation: normalizeOptionalText(input.startLocation),
     endLocation: normalizeOptionalText(input.endLocation),
     note: normalizeOptionalText(input.note),
@@ -1313,6 +1324,8 @@ function updateTripRecord(recordId: string, input: TripRecordInput): UpdateRecor
     next.consumedFuelLiters !== current.consumedFuelLiters ||
     next.pricePerLiter !== current.pricePerLiter ||
     next.totalFuelCostCny !== current.totalFuelCostCny ||
+    next.dashboardImagePath !== current.dashboardImagePath ||
+    next.dashboardImageUrl !== current.dashboardImageUrl ||
     next.startLocation !== current.startLocation ||
     next.endLocation !== current.endLocation ||
     next.note !== current.note;

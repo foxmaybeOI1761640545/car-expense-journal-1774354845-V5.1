@@ -37,6 +37,7 @@
 - 支持“业务发生时间”（加油/耗油时间）与“记录创建时间”分离；业务时间留空时自动回退到记录创建时间
 - 历史记录支持倒序展示、筛选、编辑、删除、导出 JSON/CSV
 - 耗油页支持导入 JSON、批量提交与 GitHub 历史拉取
+- 耗油页支持上传仪表盘图片，调用后端 AI 自动识别平均油耗与行驶距离并自动回填表单
 - 加油页与耗油页的一键提交/拉取按记录类型分开执行；首页提供全局一键提交/拉取
 - 用户管理页支持从 GitHub 拉取 `profile.json` 与头像文件回填本地
 - 响应式布局（桌面/平板/手机）
@@ -66,6 +67,11 @@ npm run start
 - `VAPID_PUBLIC_KEY`
 - `VAPID_PRIVATE_KEY`
 - `VAPID_SUBJECT`
+
+如果要启用耗油页的“仪表盘图片 AI 识别”，还需要填写：
+- `OPENAI_API_KEY`
+- （可选）`OPENAI_TRIP_IMAGE_MODEL`
+- （可选）`TRIP_IMAGE_UPLOAD_DIR`
 
 可用接口：
 - `GET /healthz`
@@ -209,7 +215,7 @@ JSON 内容中保留 `type` 字段，用于区分 `fuel` / `trip`。
   - 历史记录（筛选/编辑/删除/导出/提交）
 - 耗油记录页 `/#/trip`
   - 顶部返回首页
-  - 耗油表单（自动计算耗油量 + 可选耗油时间）
+  - 耗油表单（自动计算耗油量 + 可选耗油时间 + 仪表盘图片 AI 识别回填）
   - 历史记录（筛选/编辑/删除/导出/导入/单条与批量提交/拉取 GitHub 历史）
 
 ## 剩余油量统计逻辑
@@ -256,6 +262,7 @@ src/
     githubTokenVaultService.ts
     githubService.ts
     localStorageService.ts
+    tripAiService.ts
   stores/
     appStore.ts
   types/

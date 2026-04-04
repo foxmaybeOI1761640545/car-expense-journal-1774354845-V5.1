@@ -991,6 +991,21 @@ select:focus {
   text-overflow: ellipsis;
 }
 
+.trip-image-preview {
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-shell-bg);
+  padding: 8px;
+}
+
+.trip-image-preview img {
+  width: 100%;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 8px;
+  display: block;
+}
+
 .detail-note {
   border: 1px solid var(--color-border);
   border-radius: 10px;

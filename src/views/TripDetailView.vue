@@ -18,6 +18,12 @@
             <span class="route-arrow" aria-hidden="true"></span>
             <span class="route-point">{{ record.endLocation || '未填终点' }}</span>
           </p>
+          <p v-if="record.dashboardImagePath || record.dashboardImageUrl" class="muted">
+            仪表盘图片路径：{{ record.dashboardImagePath || record.dashboardImageUrl }}
+          </p>
+          <div v-if="recordDashboardImageUrl" class="trip-image-preview">
+            <img :src="recordDashboardImageUrl" alt="仪表盘图片" />
+          </div>
           <p class="detail-note">{{ record.note || '无备注' }}</p>
 
           <div class="inline-actions">
@@ -85,6 +91,7 @@
 import { computed, reactive, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import PageHeader from '../components/PageHeader.vue';
+import { resolveTripDashboardImageUrl } from '../services/tripAiService';
 import { useAppStore } from '../stores/appStore';
 import type { TripRecord } from '../types/records';
 import { parseDateTimeLocalToUnix, toDateTimeLocalInputValue, toLocalDateTime } from '../utils/date';
@@ -97,6 +104,22 @@ const store = useAppStore();
 const recordId = computed(() => String(route.params.recordId ?? ''));
 const record = computed(() => {
   return store.state.records.find((item): item is TripRecord => item.type === 'trip' && item.id === recordId.value) ?? null;
+});
+const recordDashboardImageUrl = computed(() => {
+  if (!record.value) {
+    return '';
+  }
+
+  const directUrl = record.value.dashboardImageUrl?.trim();
+  if (directUrl) {
+    return directUrl;
+  }
+
+  try {
+    return resolveTripDashboardImageUrl(record.value.dashboardImagePath, store.state.config) ?? '';
+  } catch {
+    return '';
+  }
 });
 
 const isEditing = ref(false);

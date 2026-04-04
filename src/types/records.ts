@@ -33,6 +33,8 @@ export interface TripRecord extends BaseRecord {
   consumedFuelLiters: number;
   pricePerLiter?: number;
   totalFuelCostCny?: number;
+  dashboardImagePath?: string;
+  dashboardImageUrl?: string;
   startLocation?: string;
   endLocation?: string;
 }

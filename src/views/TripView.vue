@@ -75,6 +75,33 @@
             <textarea v-model="form.note" rows="3" placeholder="例如：高速巡航为主"></textarea>
           </label>
 
+          <label class="full-width">
+            仪表盘图片（可选）
+            <input ref="tripImageInputRef" type="file" accept="image/*" @change="handleTripImageSelected" />
+          </label>
+
+          <div class="inline-actions full-width">
+            <button class="btn btn--ghost" type="button" :disabled="isAiExtracting || !selectedTripImageDataUrl" @click="extractTripMetricsByAi">
+              {{ isAiExtracting ? '识别中...' : 'AI 识别油耗和里程' }}
+            </button>
+            <button
+              class="btn btn--ghost"
+              type="button"
+              :disabled="isAiExtracting || (!selectedTripImageDataUrl && !form.dashboardImagePath && !form.dashboardImageUrl)"
+              @click="clearTripImage"
+            >
+              清除图片
+            </button>
+          </div>
+
+          <p v-if="selectedTripImageName" class="hint full-width">当前图片：{{ selectedTripImageName }}</p>
+          <p v-if="form.dashboardImagePath" class="hint full-width">已保存图片路径：{{ form.dashboardImagePath }}</p>
+          <p class="hint full-width">提示：AI 识别需要可访问的后端地址，并在后端配置 OpenAI API Key。</p>
+
+          <div v-if="tripImagePreviewUrl" class="trip-image-preview full-width">
+            <img :src="tripImagePreviewUrl" alt="仪表盘预览" />
+          </div>
+
           <datalist id="trip-location-options">
             <option v-for="location in historyLocations" :key="location" :value="location" />
           </datalist>
@@ -220,6 +247,13 @@
                 <p class="muted history-note-preview" :title="record.note || '无备注'">
                   {{ formatNotePreview(record.note) }}
                 </p>
+                <p v-if="record.dashboardImagePath || record.dashboardImageUrl" class="muted history-note-preview">
+                  仪表盘图片：
+                  <a v-if="getRecordDashboardImageUrl(record)" :href="getRecordDashboardImageUrl(record) || undefined" target="_blank" rel="noopener" @click.stop>
+                    {{ record.dashboardImagePath || '查看图片' }}
+                  </a>
+                  <span v-else>{{ record.dashboardImagePath || '已保存' }}</span>
+                </p>
 
                 <div class="inline-actions">
                   <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="goToTripDetail(record.id)">详情</button>
@@ -269,6 +303,9 @@
                 <p class="muted history-item__mobile-note" :title="record.note || '无备注'">
                   备注：{{ formatNotePreview(record.note) }}
                 </p>
+                <p v-if="record.dashboardImagePath || record.dashboardImageUrl" class="muted history-item__mobile-note">
+                  仪表盘图：{{ record.dashboardImagePath || '已保存' }}
+                </p>
 
                 <div class="inline-actions history-item__mobile-actions">
                   <button class="btn btn--ghost" type="button" :disabled="isBatchSubmitting" @click.stop="goToTripDetail(record.id)">详情</button>
@@ -297,6 +334,7 @@
 import { computed, reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import PageHeader from '../components/PageHeader.vue';
+import { extractTripMetricsFromImage, resolveTripDashboardImageUrl } from '../services/tripAiService';
 import { useAppStore } from '../stores/appStore';
 import type { FuelRecord, TripRecord } from '../types/records';
 import { parseDateTimeLocalToUnix, toDateTimeLocalInputValue, toLocalDateTime } from '../utils/date';
@@ -339,6 +377,8 @@ const form = reactive({
   startLocation: '',
   endLocation: '',
   note: store.state.config.defaultTripNote,
+  dashboardImagePath: '',
+  dashboardImageUrl: '',
 });
 
 const editForm = reactive({
@@ -358,8 +398,13 @@ const selectedTemplateNote = ref('');
 const newTemplateNote = ref('');
 const noteTemplates = ref<string[]>(loadNoteTemplates());
 const importInputRef = ref<HTMLInputElement | null>(null);
+const tripImageInputRef = ref<HTMLInputElement | null>(null);
+const selectedTripImageName = ref('');
+const selectedTripImageDataUrl = ref('');
+const selectedTripImagePreviewUrl = ref('');
 const isBatchSubmitting = ref(false);
 const isSyncingFromGithub = ref(false);
+const isAiExtracting = ref(false);
 const editingRecordId = ref<string | null>(null);
 
 watch(
@@ -494,6 +539,22 @@ const editConsumedFuelPreview = computed(() => {
   return `${roundTo((distance / 100) * average, 3).toFixed(3)} L`;
 });
 
+const tripImagePreviewUrl = computed(() => {
+  if (selectedTripImagePreviewUrl.value) {
+    return selectedTripImagePreviewUrl.value;
+  }
+
+  if (form.dashboardImageUrl.trim()) {
+    return form.dashboardImageUrl.trim();
+  }
+
+  try {
+    return resolveTripDashboardImageUrl(form.dashboardImagePath, store.state.config) ?? '';
+  } catch {
+    return '';
+  }
+});
+
 interface TripRecordDuplicateCheckInput {
   occurredAtUnix?: number;
   averageFuelConsumptionPer100Km: number;
@@ -501,6 +562,8 @@ interface TripRecordDuplicateCheckInput {
   consumedFuelLiters: number;
   pricePerLiter: number;
   totalFuelCostCny: number;
+  dashboardImagePath?: string;
+  dashboardImageUrl?: string;
   startLocation?: string;
   endLocation?: string;
   note?: string;
@@ -519,7 +582,10 @@ function resetTripForm(): void {
   form.startLocation = '';
   form.endLocation = '';
   form.note = '';
+  form.dashboardImagePath = '';
+  form.dashboardImageUrl = '';
   selectedTemplateNote.value = '';
+  clearTripImage();
 }
 
 function resolveTripTotalFuelCost(record: TripRecord): number | undefined {
@@ -546,6 +612,8 @@ function hasExactTripDuplicate(input: TripRecordDuplicateCheckInput): boolean {
       record.consumedFuelLiters === input.consumedFuelLiters &&
       record.pricePerLiter === input.pricePerLiter &&
       recordTotalFuelCost === input.totalFuelCostCny &&
+      record.dashboardImagePath === input.dashboardImagePath &&
+      record.dashboardImageUrl === input.dashboardImageUrl &&
       record.startLocation === input.startLocation &&
       record.endLocation === input.endLocation &&
       record.note === input.note
@@ -657,6 +725,102 @@ function applyTemplateNote(): void {
   store.showToast('已应用备注模板，可继续编辑。', 'info');
 }
 
+function clearTripImageSelectionState(): void {
+  selectedTripImageName.value = '';
+  selectedTripImageDataUrl.value = '';
+  selectedTripImagePreviewUrl.value = '';
+  if (tripImageInputRef.value) {
+    tripImageInputRef.value.value = '';
+  }
+}
+
+function clearTripImage(): void {
+  clearTripImageSelectionState();
+  form.dashboardImagePath = '';
+  form.dashboardImageUrl = '';
+}
+
+async function readFileAsDataUrl(file: File): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('读取图片失败。'));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.onerror = () => {
+      reject(new Error('读取图片失败。'));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+async function handleTripImageSelected(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  try {
+    const dataUrl = await readFileAsDataUrl(file);
+    selectedTripImageName.value = file.name;
+    selectedTripImageDataUrl.value = dataUrl;
+    selectedTripImagePreviewUrl.value = dataUrl;
+    form.dashboardImagePath = '';
+    form.dashboardImageUrl = '';
+    store.showToast('图片已选择，可点击“AI 识别油耗和里程”。', 'info');
+  } catch (error) {
+    clearTripImageSelectionState();
+    store.showToast(error instanceof Error ? error.message : '读取图片失败。', 'error');
+  }
+}
+
+async function extractTripMetricsByAi(): Promise<void> {
+  if (isAiExtracting.value) {
+    return;
+  }
+
+  if (!selectedTripImageDataUrl.value) {
+    store.showToast('请先选择仪表盘图片。', 'info');
+    return;
+  }
+
+  isAiExtracting.value = true;
+
+  try {
+    const result = await extractTripMetricsFromImage(selectedTripImageDataUrl.value, selectedTripImageName.value || undefined, store.state.config);
+    const average = result.averageFuelConsumptionPer100Km;
+    const distance = result.distanceKm;
+
+    if (average !== null) {
+      form.averageFuelConsumptionPer100Km = roundTo(average, 2).toFixed(2);
+    }
+    if (distance !== null) {
+      form.distanceKm = roundTo(distance, 2).toFixed(2);
+    }
+
+    form.dashboardImagePath = result.savedImagePath ?? '';
+    form.dashboardImageUrl = result.savedImageUrl ?? '';
+    if (result.savedImageUrl) {
+      selectedTripImagePreviewUrl.value = result.savedImageUrl;
+    }
+
+    if (average === null && distance === null) {
+      store.showToast('AI 未识别到可用数值，请手动填写。', 'info');
+      return;
+    }
+
+    store.showToast('AI 识别完成，已自动填入可识别字段。', 'success');
+  } catch (error) {
+    store.showToast(error instanceof Error ? error.message : 'AI 识别失败。', 'error');
+  } finally {
+    isAiExtracting.value = false;
+  }
+}
+
 function resolveOccurredAtUnixOrReject(value: string): number | undefined {
   const parsed = parseDateTimeLocalToUnix(value);
 
@@ -687,6 +851,8 @@ function saveTripRecord(): void {
       consumedFuelLiters,
       pricePerLiter: roundTo(price, 2),
       totalFuelCostCny: roundTo(consumedFuelLiters * price, 2),
+      dashboardImagePath: normalizeOptionalText(form.dashboardImagePath),
+      dashboardImageUrl: normalizeOptionalText(form.dashboardImageUrl),
       startLocation: normalizeOptionalText(form.startLocation),
       endLocation: normalizeOptionalText(form.endLocation),
       note: normalizeOptionalText(form.note),
@@ -704,6 +870,8 @@ function saveTripRecord(): void {
       averageFuelConsumptionPer100Km: average,
       distanceKm: distance,
       pricePerLiter: price,
+      dashboardImagePath: form.dashboardImagePath,
+      dashboardImageUrl: form.dashboardImageUrl,
       startLocation: form.startLocation,
       endLocation: form.endLocation,
       note: form.note,
@@ -981,6 +1149,8 @@ function exportTripCsv(): void {
       'consumedFuelLiters',
       'pricePerLiter',
       'totalFuelCostCny',
+      'dashboardImagePath',
+      'dashboardImageUrl',
       'startLocation',
       'endLocation',
       'note',
@@ -994,6 +1164,8 @@ function exportTripCsv(): void {
       record.consumedFuelLiters.toFixed(3),
       record.pricePerLiter?.toFixed(2) ?? '',
       getTripFuelCost(record)?.toFixed(2) ?? '',
+      record.dashboardImagePath ?? '',
+      record.dashboardImageUrl ?? '',
       record.startLocation ?? '',
       record.endLocation ?? '',
       record.note ?? '',
@@ -1036,6 +1208,20 @@ function formatNotePreview(note?: string): string {
   }
 
   return value.replace(/\s+/g, ' ');
+}
+
+function getRecordDashboardImageUrl(record: TripRecord): string | null {
+  const directUrl = record.dashboardImageUrl?.trim();
+  if (directUrl) {
+    return directUrl;
+  }
+
+  try {
+    const byPath = resolveTripDashboardImageUrl(record.dashboardImagePath, store.state.config);
+    return byPath ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function getTripFuelCost(record: TripRecord): number | null {

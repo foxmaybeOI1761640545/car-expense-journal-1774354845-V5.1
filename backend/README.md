@@ -9,8 +9,10 @@
 - 健康检查：`GET/HEAD /healthz`
 - 前端连通性检测：`GET/HEAD /api/ping`
 - CORS 控制（允许前端站点跨域访问）
+- 仪表盘图片 AI 识别：`POST /api/trip/ai-extract`
+- 图片访问：`GET/HEAD /uploads/...`
 
-当前不依赖数据库，状态为无状态服务。
+当前不依赖数据库；提醒数据仍走 GitHub，耗油图片识别会把图片落盘到本地目录。
 
 ## 2. 本地启动
 
@@ -67,6 +69,28 @@ CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
 
 - 最大端口回退步数，默认 `20`
 
+### `OPENAI_API_KEY`（耗油图片识别必填）
+
+- 用于 `POST /api/trip/ai-extract` 调用 OpenAI 视觉能力
+
+### `OPENAI_TRIP_IMAGE_MODEL`（可选）
+
+- 识别模型，默认 `gpt-4.1-mini`
+
+### `OPENAI_API_BASE_URL`（可选）
+
+- OpenAI API 基地址，默认 `https://api.openai.com/v1`
+
+### `TRIP_IMAGE_UPLOAD_DIR`（可选）
+
+- 图片落盘目录
+- 默认：`backend/uploads/trip-images`
+
+### `MAX_TRIP_AI_JSON_BODY_BYTES`（可选）
+
+- `POST /api/trip/ai-extract` 请求体大小限制（单位：字节）
+- 默认：`0`（不设置显式上限，最终仍受机器内存限制）
+
 ## 4. API 说明
 
 ### `GET/HEAD /api/ping`
@@ -100,6 +124,39 @@ CORS_ORIGINS=https://your-frontend.example.com,https://your-pages.example.com
 说明：
 - `GET`：返回 JSON（含 `health: "ok"`）。
 - `HEAD`：返回 `200` 且不返回响应体（用于监控探测）。
+
+### `POST /api/trip/ai-extract`
+
+请求体示例：
+
+```json
+{
+  "imageDataUrl": "data:image/jpeg;base64,...",
+  "imageFileName": "dashboard.jpg"
+}
+```
+
+响应示例：
+
+```json
+{
+  "ok": true,
+  "averageFuelConsumptionPer100Km": 12.8,
+  "distanceKm": 5.7,
+  "savedImagePath": "uploads/trip-images/1743779000000-abc123-dashboard.jpg",
+  "savedImageUrl": "http://127.0.0.1:18080/uploads/trip-images/1743779000000-abc123-dashboard.jpg",
+  "rawText": "{\"averageFuelConsumptionPer100Km\":12.8,\"distanceKm\":5.7}"
+}
+```
+
+说明：
+- 后端会先保存图片，再调用 OpenAI 识别。
+- 返回值中的数值字段可能为 `null`（无法识别时）。
+
+### `GET/HEAD /uploads/...`
+
+- 读取已保存的图片文件（默认目录：`uploads/`）
+- 可用于前端展示历史记录里的仪表盘图片
 
 ## 5. Render 部署（后端单仓库）
 

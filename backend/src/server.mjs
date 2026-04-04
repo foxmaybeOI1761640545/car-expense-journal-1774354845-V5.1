@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
@@ -33,6 +34,12 @@ const MAX_REMINDER_JSON_BODY_BYTES = clampInteger(
   4 * 1024,
   2 * 1024 * 1024,
 );
+const MAX_TRIP_AI_JSON_BODY_BYTES = resolveBodyByteLimit(process.env.MAX_TRIP_AI_JSON_BODY_BYTES, 0);
+const OPENAI_API_KEY = normalizeNonEmptyString(process.env.OPENAI_API_KEY || '', 8192);
+const OPENAI_API_BASE_URL = normalizeOpenAiApiBaseUrl(process.env.OPENAI_API_BASE_URL || '');
+const OPENAI_TRIP_IMAGE_MODEL = normalizeNonEmptyString(process.env.OPENAI_TRIP_IMAGE_MODEL || '', 120) || 'gpt-4.1-mini';
+const TRIP_IMAGE_UPLOAD_DIR = resolveTripImageUploadDirectory(process.env.TRIP_IMAGE_UPLOAD_DIR || '');
+const TRIP_IMAGE_PUBLIC_ROOT_DIR = path.resolve(BACKEND_ROOT_DIR, 'uploads');
 const PAT_WRAP_KEY_VERSION = (process.env.PAT_WRAP_KEY_VERSION || 'v1').trim() || 'v1';
 const PAT_WRAP_KEY = resolvePatWrapKey(process.env.PAT_WRAP_KEY_BASE64 || '');
 const PUSH_SCHEMA_VERSION = 1;
@@ -148,6 +155,45 @@ function clampInteger(raw, fallback, min, max) {
 
   const rounded = Math.floor(parsed);
   return Math.max(min, Math.min(max, rounded));
+}
+
+function resolveBodyByteLimit(raw, fallback) {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return fallback;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const rounded = Math.floor(parsed);
+  if (rounded <= 0) {
+    return 0;
+  }
+
+  return rounded;
+}
+
+function normalizeOpenAiApiBaseUrl(raw) {
+  const normalized = normalizeNonEmptyString(raw, 500).replace(/\/+$/, '');
+  if (!normalized) {
+    return 'https://api.openai.com/v1';
+  }
+  return normalized;
+}
+
+function resolveTripImageUploadDirectory(raw) {
+  const normalized = normalizeNonEmptyString(raw, 1000).replace(/\\/g, '/').replace(/\/+$/, '');
+  if (!normalized) {
+    return path.resolve(BACKEND_ROOT_DIR, 'uploads', 'trip-images');
+  }
+
+  if (path.isAbsolute(normalized)) {
+    return path.resolve(normalized);
+  }
+
+  return path.resolve(BACKEND_ROOT_DIR, normalized);
 }
 
 function resolveCorsOrigin(origin) {
@@ -708,6 +754,7 @@ async function readJsonBody(req, maxBytes) {
     const chunks = [];
     let totalBytes = 0;
     let exceededLimit = false;
+    const hasByteLimit = Number.isFinite(maxBytes) && maxBytes > 0;
 
     req.on('data', (chunk) => {
       if (exceededLimit) {
@@ -715,7 +762,7 @@ async function readJsonBody(req, maxBytes) {
       }
 
       totalBytes += chunk.length;
-      if (totalBytes > maxBytes) {
+      if (hasByteLimit && totalBytes > maxBytes) {
         exceededLimit = true;
         return;
       }
@@ -764,6 +811,295 @@ async function parseGithubResponseBody(response) {
       message: text.slice(0, 2000),
     };
   }
+}
+
+function isPathWithinRoot(targetPath, rootPath) {
+  const relative = path.relative(path.resolve(rootPath), path.resolve(targetPath));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function normalizeFilesystemPathToPosix(value) {
+  return value.split(path.sep).join('/');
+}
+
+function resolveRequestProtocol(req) {
+  const forwarded = normalizeNonEmptyString(req.headers['x-forwarded-proto'] || '', 40);
+  if (forwarded) {
+    const first = forwarded.split(',')[0]?.trim().toLowerCase();
+    if (first === 'http' || first === 'https') {
+      return first;
+    }
+  }
+
+  return 'http';
+}
+
+function buildAbsoluteUrlFromRequest(req, relativePath) {
+  const host = normalizeNonEmptyString(req.headers.host || '', 300) || `127.0.0.1:${listeningPort}`;
+  const protocol = resolveRequestProtocol(req);
+  return `${protocol}://${host}/${relativePath.replace(/^\/+/, '')}`;
+}
+
+function inferFileExtensionFromMimeType(mimeType) {
+  const normalized = normalizeNonEmptyString(mimeType || '', 120).toLowerCase();
+  if (!normalized.includes('/')) {
+    return 'bin';
+  }
+
+  const subtype = normalized.split('/')[1] || 'bin';
+  if (subtype === 'svg+xml') {
+    return 'svg';
+  }
+
+  const withoutSuffix = subtype.split('+')[0].replace(/[^a-z0-9._-]/g, '');
+  if (!withoutSuffix) {
+    return 'bin';
+  }
+
+  if (withoutSuffix === 'jpeg') {
+    return 'jpg';
+  }
+
+  return withoutSuffix.slice(0, 12);
+}
+
+function inferMimeTypeByFilePath(filePath) {
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
+    return 'image/jpeg';
+  }
+  if (lower.endsWith('.png')) {
+    return 'image/png';
+  }
+  if (lower.endsWith('.gif')) {
+    return 'image/gif';
+  }
+  if (lower.endsWith('.webp')) {
+    return 'image/webp';
+  }
+  if (lower.endsWith('.bmp')) {
+    return 'image/bmp';
+  }
+  if (lower.endsWith('.svg')) {
+    return 'image/svg+xml';
+  }
+  if (lower.endsWith('.heic')) {
+    return 'image/heic';
+  }
+  if (lower.endsWith('.heif')) {
+    return 'image/heif';
+  }
+  if (lower.endsWith('.avif')) {
+    return 'image/avif';
+  }
+  return 'application/octet-stream';
+}
+
+function sanitizeTripImageFileName(fileName, extensionHint) {
+  const normalized = normalizeNonEmptyString(fileName || '', 260);
+  const rawBaseName = normalized.replace(/\.[^.]+$/, '');
+  const safeBaseName = rawBaseName
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  const safeExtension = (extensionHint || 'bin')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 12);
+  const base = safeBaseName || 'trip-dashboard';
+  const extension = safeExtension || 'bin';
+  return `${base}.${extension}`;
+}
+
+function parseImageDataUrl(dataUrl) {
+  const normalized = typeof dataUrl === 'string' ? dataUrl.trim() : '';
+  const matched = /^data:([^;,]+);base64,([a-z0-9+/=\r\n]+)$/i.exec(normalized);
+  if (!matched) {
+    throw new Error('图片数据无效，请使用 base64 Data URL 上传。');
+  }
+
+  const mimeType = normalizeNonEmptyString(matched[1], 120).toLowerCase() || 'application/octet-stream';
+  const base64 = matched[2].replace(/[\r\n]/g, '');
+  if (!base64) {
+    throw new Error('图片内容为空。');
+  }
+
+  try {
+    return {
+      mimeType,
+      buffer: Buffer.from(base64, 'base64'),
+    };
+  } catch {
+    throw new Error('图片 base64 解码失败。');
+  }
+}
+
+function extractFirstJsonObject(rawText) {
+  const text = normalizeNonEmptyString(rawText || '', 20_000);
+  if (!text) {
+    return null;
+  }
+
+  const fencedMatch = /```(?:json)?\s*([\s\S]*?)```/i.exec(text);
+  const candidate = fencedMatch ? fencedMatch[1] : text;
+
+  const start = candidate.indexOf('{');
+  const end = candidate.lastIndexOf('}');
+  if (start < 0 || end < start) {
+    return null;
+  }
+
+  const jsonText = candidate.slice(start, end + 1);
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function extractOpenAiOutputText(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+
+  const output = Array.isArray(payload.output) ? payload.output : [];
+  const textParts = [];
+
+  for (const item of output) {
+    if (!item || typeof item !== 'object') {
+      continue;
+    }
+
+    const content = Array.isArray(item.content) ? item.content : [];
+    for (const part of content) {
+      if (!part || typeof part !== 'object') {
+        continue;
+      }
+
+      if (typeof part.text === 'string' && part.text.trim()) {
+        textParts.push(part.text.trim());
+      } else if (typeof part.output_text === 'string' && part.output_text.trim()) {
+        textParts.push(part.output_text.trim());
+      }
+    }
+  }
+
+  return textParts.join('\n').trim();
+}
+
+function normalizeTripAiNumber(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return null;
+  }
+
+  return Number(parsed.toFixed(6));
+}
+
+function extractTripMetricsFromAiText(rawText) {
+  const parsed = extractFirstJsonObject(rawText);
+  if (!parsed || typeof parsed !== 'object') {
+    return {
+      averageFuelConsumptionPer100Km: null,
+      distanceKm: null,
+    };
+  }
+
+  return {
+    averageFuelConsumptionPer100Km: normalizeTripAiNumber(parsed.averageFuelConsumptionPer100Km),
+    distanceKm: normalizeTripAiNumber(parsed.distanceKm),
+  };
+}
+
+async function saveTripImageFile(imageDataUrl, imageFileName) {
+  const parsed = parseImageDataUrl(imageDataUrl);
+  const extension = inferFileExtensionFromMimeType(parsed.mimeType);
+  const safeFileName = sanitizeTripImageFileName(imageFileName, extension);
+  const uniquePrefix = `${Date.now()}-${randomBytes(6).toString('hex')}`;
+  const outputFileName = `${uniquePrefix}-${safeFileName}`;
+  const absolutePath = path.join(TRIP_IMAGE_UPLOAD_DIR, outputFileName);
+
+  await fs.mkdir(TRIP_IMAGE_UPLOAD_DIR, { recursive: true });
+  await fs.writeFile(absolutePath, parsed.buffer);
+
+  if (isPathWithinRoot(absolutePath, BACKEND_ROOT_DIR)) {
+    const relativeToBackendRoot = normalizeFilesystemPathToPosix(path.relative(BACKEND_ROOT_DIR, absolutePath));
+    return {
+      savedImagePath: relativeToBackendRoot,
+      isPublic: isPathWithinRoot(absolutePath, TRIP_IMAGE_PUBLIC_ROOT_DIR),
+    };
+  }
+
+  return {
+    savedImagePath: absolutePath,
+    isPublic: false,
+  };
+}
+
+async function callOpenAiForTripImage(imageDataUrl) {
+  if (!OPENAI_API_KEY) {
+    throw new Error('后端未配置 OPENAI_API_KEY。');
+  }
+
+  const response = await fetch(`${OPENAI_API_BASE_URL}/responses`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_TRIP_IMAGE_MODEL,
+      temperature: 0,
+      input: [
+        {
+          role: 'system',
+          content: [
+            {
+              type: 'input_text',
+              text:
+                '你是车辆仪表识别助手。仅输出 JSON，不要输出其他内容。JSON 结构固定为 {"averageFuelConsumptionPer100Km": number|null, "distanceKm": number|null}。若无法判断请返回 null。',
+            },
+          ],
+        },
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: '请从仪表盘图片中识别“平均油耗(L/100km)”和“行驶距离(km)”。只返回 JSON。',
+            },
+            {
+              type: 'input_image',
+              image_url: imageDataUrl,
+            },
+          ],
+        },
+      ],
+    }),
+  });
+
+  const payload = await parseGithubResponseBody(response);
+  if (!response.ok) {
+    const message = extractGithubErrorMessage(payload, `HTTP ${response.status}`);
+    throw new Error(`OpenAI 调用失败：${message}`);
+  }
+
+  const outputText = extractOpenAiOutputText(payload);
+  if (!outputText) {
+    throw new Error('OpenAI 返回为空，无法解析识别结果。');
+  }
+
+  return outputText;
 }
 
 async function proxyGithubContentsRequest({ method, pat, owner, repo, branch, path, payload }) {
@@ -2171,6 +2507,158 @@ async function handleGithubContentsProxyRequest(req, res, origin, mode) {
   }
 }
 
+function validateTripAiExtractBody(body) {
+  const imageDataUrl = typeof body?.imageDataUrl === 'string' ? body.imageDataUrl.trim() : '';
+  const imageFileName = normalizeNonEmptyString(body?.imageFileName, 260);
+
+  if (!imageDataUrl) {
+    return {
+      ok: false,
+      message: '缺少 imageDataUrl。',
+    };
+  }
+
+  if (!/^data:[^;,]+;base64,[a-z0-9+/=\r\n]+$/i.test(imageDataUrl)) {
+    return {
+      ok: false,
+      message: 'imageDataUrl 格式无效，请使用 base64 Data URL。',
+    };
+  }
+
+  return {
+    ok: true,
+    imageDataUrl,
+    imageFileName: imageFileName || undefined,
+  };
+}
+
+function normalizeUploadRequestRelativePath(pathname) {
+  if (typeof pathname !== 'string' || !pathname.startsWith('/uploads/')) {
+    return null;
+  }
+
+  const rawPath = pathname.slice('/'.length);
+  const normalized = path.posix.normalize(`/${rawPath}`).replace(/^\/+/, '');
+  if (!normalized || normalized.includes('..')) {
+    return null;
+  }
+
+  return normalized;
+}
+
+async function handleTripImageFileRequest(req, res, origin, pathname) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  const relativePath = normalizeUploadRequestRelativePath(pathname);
+  if (!relativePath) {
+    writeJson(res, 400, { ok: false, message: 'Invalid upload path.' }, origin);
+    return;
+  }
+
+  const absolutePath = path.resolve(BACKEND_ROOT_DIR, relativePath);
+  if (!isPathWithinRoot(absolutePath, TRIP_IMAGE_PUBLIC_ROOT_DIR)) {
+    writeJson(res, 403, { ok: false, message: 'Forbidden path.' }, origin);
+    return;
+  }
+
+  let fileStats;
+  try {
+    fileStats = await fs.stat(absolutePath);
+  } catch {
+    writeJson(res, 404, { ok: false, message: 'File Not Found' }, origin);
+    return;
+  }
+
+  if (!fileStats.isFile()) {
+    writeJson(res, 404, { ok: false, message: 'File Not Found' }, origin);
+    return;
+  }
+
+  const headers = {
+    'Content-Type': inferMimeTypeByFilePath(absolutePath),
+    'Content-Length': fileStats.size,
+    'Cache-Control': 'public, max-age=31536000, immutable',
+  };
+  const resolvedCorsOrigin = resolveCorsOrigin(origin);
+  if (resolvedCorsOrigin) {
+    headers['Access-Control-Allow-Origin'] = resolvedCorsOrigin;
+    headers['Access-Control-Allow-Methods'] = 'GET,HEAD,POST,PATCH,OPTIONS';
+    headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
+    headers['Vary'] = 'Origin';
+  }
+
+  if (req.method === 'HEAD') {
+    res.writeHead(200, headers);
+    res.end();
+    return;
+  }
+
+  try {
+    const fileBuffer = await fs.readFile(absolutePath);
+    res.writeHead(200, headers);
+    res.end(fileBuffer);
+  } catch {
+    writeJson(res, 500, { ok: false, message: 'Failed to read file.' }, origin);
+  }
+}
+
+async function handleTripAiExtractRequest(req, res, origin) {
+  if (req.method !== 'POST') {
+    writeJson(res, 405, { ok: false, message: 'Method Not Allowed' }, origin);
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(req, MAX_TRIP_AI_JSON_BODY_BYTES);
+    const validated = validateTripAiExtractBody(body);
+    if (!validated.ok) {
+      writeJson(res, 400, { ok: false, message: validated.message }, origin);
+      return;
+    }
+
+    const rawText = await callOpenAiForTripImage(validated.imageDataUrl);
+    const savedImage = await saveTripImageFile(validated.imageDataUrl, validated.imageFileName);
+    const metrics = extractTripMetricsFromAiText(rawText);
+    const savedImageUrl = savedImage.isPublic ? buildAbsoluteUrlFromRequest(req, savedImage.savedImagePath) : undefined;
+
+    writeJson(
+      res,
+      200,
+      {
+        ok: true,
+        averageFuelConsumptionPer100Km: metrics.averageFuelConsumptionPer100Km,
+        distanceKm: metrics.distanceKm,
+        savedImagePath: savedImage.savedImagePath,
+        savedImageUrl,
+        rawText,
+      },
+      origin,
+    );
+  } catch (error) {
+    if (error && error.code === 'BODY_TOO_LARGE') {
+      writeJson(res, 413, { ok: false, message: 'JSON body too large.' }, origin);
+      return;
+    }
+    if (error && error.code === 'INVALID_JSON') {
+      writeJson(res, 400, { ok: false, message: 'Invalid JSON.' }, origin);
+      return;
+    }
+
+    writeJson(
+      res,
+      502,
+      {
+        ok: false,
+        message: error instanceof Error ? error.message : 'AI extract failed.',
+      },
+      origin,
+    );
+  }
+}
+
 const server = http.createServer((req, res) => {
   const origin = req.headers.origin;
   const host = req.headers.host || `127.0.0.1:${listeningPort}`;
@@ -2193,6 +2681,11 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'OPTIONS') {
     writeNoContent(res, origin);
+    return;
+  }
+
+  if (pathname.startsWith('/uploads/')) {
+    void handleTripImageFileRequest(req, res, origin, pathname);
     return;
   }
 
@@ -2231,6 +2724,11 @@ const server = http.createServer((req, res) => {
     }
 
     writeJson(res, 200, getRuntimeStatus(), origin);
+    return;
+  }
+
+  if (pathname === '/api/trip/ai-extract') {
+    void handleTripAiExtractRequest(req, res, origin);
     return;
   }
 
@@ -2341,6 +2839,8 @@ async function startServer() {
       console.log(`[${SERVICE_NAME}] cors origins: ${CORS_ORIGINS.join(', ')}`);
       console.log(`[${SERVICE_NAME}] pat sealing: ${PAT_WRAP_KEY ? `enabled (${PAT_WRAP_KEY_VERSION})` : 'disabled'}`);
       console.log(`[${SERVICE_NAME}] push vapid: ${pushConfigured ? 'enabled' : 'disabled'}`);
+      console.log(`[${SERVICE_NAME}] openai trip ai: ${OPENAI_API_KEY ? `enabled (${OPENAI_TRIP_IMAGE_MODEL})` : 'disabled'}`);
+      console.log(`[${SERVICE_NAME}] trip image upload dir: ${TRIP_IMAGE_UPLOAD_DIR}`);
       console.log(`[${SERVICE_NAME}] internal tick token: ${INTERNAL_TICK_TOKEN ? 'configured' : 'missing'}`);
       console.log(
         `[${SERVICE_NAME}] internal tick github defaults: ${
