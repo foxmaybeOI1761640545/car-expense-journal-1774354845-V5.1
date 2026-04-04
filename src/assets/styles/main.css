@@ -896,6 +896,23 @@ select:focus {
   grid-column: 1 / -1;
 }
 
+.trip-mobile-page-actions {
+  display: none;
+}
+
+.trip-panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.trip-history-content {
+  display: grid;
+  gap: 12px;
+}
+
 .list-header {
   display: flex;
   justify-content: space-between;
@@ -1758,6 +1775,27 @@ select:focus {
   .list-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .trip-mobile-page-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .trip-mobile-page-actions .btn {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .page--trip-record .trip-panel-head {
+    align-items: flex-start;
+  }
+
+  .page--trip-record .trip-panel-head .inline-actions {
+    width: 100%;
+    justify-content: flex-end;
   }
 
   .link-like {

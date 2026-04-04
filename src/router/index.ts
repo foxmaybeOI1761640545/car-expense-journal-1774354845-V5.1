@@ -28,6 +28,16 @@ const router = createRouter({
       component: TripView,
     },
     {
+      path: '/trip/form',
+      name: 'trip-form',
+      component: TripView,
+    },
+    {
+      path: '/trip/history',
+      name: 'trip-history',
+      component: TripView,
+    },
+    {
       path: '/trip/:recordId',
       name: 'trip-detail',
       component: TripDetailView,

@@ -2,10 +2,23 @@
   <main class="page page--record page--trip-record">
     <PageHeader title="耗油记录" description="录入平均油耗、里程与油价，自动计算本次耗油量和费用。" />
 
+    <section v-if="showMobileTripSubPageNav" class="trip-mobile-page-actions">
+      <button class="btn btn--ghost" type="button" :disabled="isTripFormPage" @click="goToTripFormPage">耗油记录表单</button>
+      <button class="btn btn--ghost" type="button" :disabled="isTripHistoryPage" @click="goToTripHistoryPage">耗油历史</button>
+    </section>
+
     <section class="record-layout">
-      <article class="card form-card">
-        <h2>耗油记录表单</h2>
-        <form class="form-grid" @submit.prevent="saveTripRecord">
+      <article v-if="showTripFormPanel" class="card form-card">
+        <div class="trip-panel-head">
+          <h2>耗油记录表单</h2>
+          <div class="inline-actions">
+            <button v-if="isTripSubPage" class="btn btn--ghost" type="button" @click="goToTripMainPage">返回耗油记录主页</button>
+            <button v-if="isMobileViewport" class="btn btn--ghost" type="button" @click="toggleTripFormCollapse">
+              {{ shouldCollapseTripForm ? '展开表单' : '折叠表单' }}
+            </button>
+          </div>
+        </div>
+        <form v-show="!shouldCollapseTripForm" class="form-grid" @submit.prevent="saveTripRecord">
           <label>
             平均油耗（L/100km）
             <input v-model="form.averageFuelConsumptionPer100Km" type="number" min="0.01" step="0.01" inputmode="decimal" />
@@ -122,10 +135,20 @@
         </form>
       </article>
 
-      <article class="card list-card">
-        <div class="list-header">
+      <article v-if="showTripHistoryPanel" class="card list-card">
+        <div class="trip-panel-head">
           <h2>耗油历史</h2>
           <div class="inline-actions">
+            <button v-if="isTripSubPage" class="btn btn--ghost" type="button" @click="goToTripMainPage">返回耗油记录主页</button>
+            <button v-if="isMobileViewport" class="btn btn--ghost" type="button" @click="toggleTripHistoryCollapse">
+              {{ shouldCollapseTripHistory ? '展开历史' : '折叠历史' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-show="!shouldCollapseTripHistory" class="trip-history-content">
+          <div class="list-header">
+            <div class="inline-actions">
             <button class="btn btn--ghost" @click="exportTripJson">导出 JSON</button>
             <button class="btn btn--ghost" @click="exportTripCsv">导出 CSV</button>
             <button class="btn btn--ghost" @click="openImportDialog">导入 JSON</button>
@@ -333,15 +356,16 @@
           </li>
         </ul>
 
-        <p v-else class="muted">暂无符合筛选条件的耗油记录。</p>
+          <p v-else class="muted">暂无符合筛选条件的耗油记录。</p>
+        </div>
       </article>
     </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
-import { useRouter } from 'vue-router';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import PageHeader from '../components/PageHeader.vue';
 import { extractTripMetricsFromImage, resolveTripDashboardImageUrl } from '../services/tripAiService';
 import { useAppStore } from '../stores/appStore';
@@ -353,9 +377,24 @@ import { parsePositiveNumber, roundTo } from '../utils/number';
 const NOTE_TEMPLATE_STORAGE_KEY = 'trip-note-templates';
 const NOTE_TEMPLATE_LIMIT = 30;
 const NOTE_TEMPLATE_MAX_LENGTH = 120;
+const MOBILE_TRIP_BREAKPOINT = 767;
 
 const router = useRouter();
+const route = useRoute();
 const store = useAppStore();
+const isMobileViewport = ref(typeof window !== 'undefined' ? window.innerWidth <= MOBILE_TRIP_BREAKPOINT : false);
+const isTripFormCollapsed = ref(false);
+const isTripHistoryCollapsed = ref(false);
+
+const isTripMainPage = computed(() => route.name === 'trip');
+const isTripFormPage = computed(() => route.name === 'trip-form');
+const isTripHistoryPage = computed(() => route.name === 'trip-history');
+const isTripSubPage = computed(() => isTripFormPage.value || isTripHistoryPage.value);
+const showTripFormPanel = computed(() => !isTripHistoryPage.value);
+const showTripHistoryPanel = computed(() => !isTripFormPage.value);
+const showMobileTripSubPageNav = computed(() => isMobileViewport.value && isTripMainPage.value);
+const shouldCollapseTripForm = computed(() => isMobileViewport.value && isTripFormCollapsed.value);
+const shouldCollapseTripHistory = computed(() => isMobileViewport.value && isTripHistoryCollapsed.value);
 
 const latestFuelPricePerLiter = computed<number | null>(() => {
   const latestFuelRecord = store.state.records
@@ -416,6 +455,97 @@ const isBatchSubmitting = ref(false);
 const isSyncingFromGithub = ref(false);
 const isAiExtracting = ref(false);
 const editingRecordId = ref<string | null>(null);
+
+function updateMobileViewportState(): void {
+  if (typeof window === 'undefined') {
+    isMobileViewport.value = false;
+    return;
+  }
+
+  isMobileViewport.value = window.innerWidth <= MOBILE_TRIP_BREAKPOINT;
+}
+
+function toggleTripFormCollapse(): void {
+  if (!isMobileViewport.value) {
+    return;
+  }
+
+  isTripFormCollapsed.value = !isTripFormCollapsed.value;
+}
+
+function toggleTripHistoryCollapse(): void {
+  if (!isMobileViewport.value) {
+    return;
+  }
+
+  isTripHistoryCollapsed.value = !isTripHistoryCollapsed.value;
+}
+
+function goToTripMainPage(): void {
+  if (isTripMainPage.value) {
+    return;
+  }
+
+  router.push({ name: 'trip' });
+}
+
+function goToTripFormPage(): void {
+  if (isTripFormPage.value) {
+    return;
+  }
+
+  router.push({ name: 'trip-form' });
+}
+
+function goToTripHistoryPage(): void {
+  if (isTripHistoryPage.value) {
+    return;
+  }
+
+  router.push({ name: 'trip-history' });
+}
+
+onMounted(() => {
+  updateMobileViewportState();
+
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.addEventListener('resize', updateMobileViewportState);
+});
+
+onBeforeUnmount(() => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.removeEventListener('resize', updateMobileViewportState);
+});
+
+watch(isMobileViewport, (isMobile) => {
+  if (isMobile) {
+    return;
+  }
+
+  isTripFormCollapsed.value = false;
+  isTripHistoryCollapsed.value = false;
+});
+
+watch(
+  () => route.name,
+  () => {
+    if (isTripFormPage.value) {
+      isTripHistoryCollapsed.value = false;
+      return;
+    }
+
+    if (isTripHistoryPage.value) {
+      isTripFormCollapsed.value = false;
+    }
+  },
+  { immediate: true },
+);
 
 watch(
   latestFuelPricePerLiter,
