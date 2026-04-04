@@ -19,6 +19,16 @@ interface TripAiExtractPayload {
   rawText?: unknown;
 }
 
+interface TripAiExtractRequestBody {
+  imageDataUrl: string;
+  imageFileName?: string;
+  sealedToken?: string;
+  owner?: string;
+  repo?: string;
+  branch?: string;
+  recordsDir?: string;
+}
+
 const UNSAFE_BROWSER_PORTS = new Set<number>([
   1, 7, 9, 11, 13, 15, 17, 19, 20, 21, 22, 23, 25, 37, 42, 43, 53, 77, 79, 87, 95, 101, 102, 103, 104, 109, 110, 111,
   113, 115, 117, 119, 123, 135, 137, 139, 143, 161, 179, 389, 427, 465, 512, 513, 514, 515, 526, 530, 531, 532, 540,
@@ -123,9 +133,36 @@ function resolveBackendBaseUrl(config: Pick<AppConfig, 'reminderApiBaseUrl' | 'r
   return absolute;
 }
 
+function normalizeRepoPath(value: string): string {
+  return value.trim().replace(/^\/+|\/+$/g, '');
+}
+
+function buildGithubRawImageUrl(
+  imagePath: string,
+  config: Pick<AppConfig, 'githubOwner' | 'githubRepo' | 'githubBranch'>,
+): string | undefined {
+  const owner = config.githubOwner.trim();
+  const repo = config.githubRepo.trim();
+  const branch = config.githubBranch.trim();
+  const normalizedPath = imagePath.trim().replace(/^\/+/, '');
+
+  if (!owner || !repo || !branch || !normalizedPath) {
+    return undefined;
+  }
+
+  const encodedPath = normalizedPath
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+  return `https://raw.githubusercontent.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${encodeURIComponent(branch)}/${encodedPath}`;
+}
+
 export function resolveTripDashboardImageUrl(
   pathOrUrl: string | undefined,
-  config: Pick<AppConfig, 'reminderApiBaseUrl' | 'reminderApiFallbackBaseUrl'>,
+  config: Pick<
+    AppConfig,
+    'reminderApiBaseUrl' | 'reminderApiFallbackBaseUrl' | 'githubOwner' | 'githubRepo' | 'githubBranch' | 'githubRecordsDir'
+  >,
 ): string | undefined {
   const value = pathOrUrl?.trim();
   if (!value) {
@@ -136,19 +173,53 @@ export function resolveTripDashboardImageUrl(
     return value;
   }
 
-  const baseUrl = resolveBackendBaseUrl(config);
-  return `${baseUrl}/${value.replace(/^\/+/, '')}`;
+  const normalizedPath = value.replace(/^\/+/, '');
+  const normalizedRecordsDir = normalizeRepoPath(config.githubRecordsDir);
+  if (normalizedRecordsDir && normalizedPath.startsWith(`${normalizedRecordsDir}/`)) {
+    const githubUrl = buildGithubRawImageUrl(normalizedPath, config);
+    if (githubUrl) {
+      return githubUrl;
+    }
+  }
+
+  try {
+    const baseUrl = resolveBackendBaseUrl(config);
+    return `${baseUrl}/${normalizedPath}`;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function extractTripMetricsFromImage(
   imageDataUrl: string,
   imageFileName: string | undefined,
-  config: Pick<AppConfig, 'reminderApiBaseUrl' | 'reminderApiFallbackBaseUrl'>,
+  config: Pick<
+    AppConfig,
+    'reminderApiBaseUrl' | 'reminderApiFallbackBaseUrl' | 'githubOwner' | 'githubRepo' | 'githubBranch' | 'githubRecordsDir'
+  >,
+  githubToken: string | undefined,
   timeoutMs = 120_000,
 ): Promise<TripAiExtractResult> {
   const backendBaseUrl = resolveBackendBaseUrl(config);
   const normalizedImageDataUrl = normalizeImageDataUrl(imageDataUrl);
   const fileName = imageFileName?.trim();
+  const owner = config.githubOwner.trim();
+  const repo = config.githubRepo.trim();
+  const branch = config.githubBranch.trim();
+  const recordsDir = normalizeRepoPath(config.githubRecordsDir);
+  const sealedToken = githubToken?.trim() || '';
+  const requestBody: TripAiExtractRequestBody = {
+    imageDataUrl: normalizedImageDataUrl,
+    imageFileName: fileName || undefined,
+  };
+
+  if (sealedToken && owner && repo && recordsDir) {
+    requestBody.sealedToken = sealedToken;
+    requestBody.owner = owner;
+    requestBody.repo = repo;
+    requestBody.branch = branch || undefined;
+    requestBody.recordsDir = recordsDir;
+  }
 
   const controller = new AbortController();
   const timeoutHandle = window.setTimeout(() => {
@@ -163,10 +234,7 @@ export async function extractTripMetricsFromImage(
         Accept: 'application/json',
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        imageDataUrl: normalizedImageDataUrl,
-        imageFileName: fileName || undefined,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {

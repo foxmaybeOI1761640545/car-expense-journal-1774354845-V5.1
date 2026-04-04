@@ -791,7 +791,12 @@ async function extractTripMetricsByAi(): Promise<void> {
   isAiExtracting.value = true;
 
   try {
-    const result = await extractTripMetricsFromImage(selectedTripImageDataUrl.value, selectedTripImageName.value || undefined, store.state.config);
+    const result = await extractTripMetricsFromImage(
+      selectedTripImageDataUrl.value,
+      selectedTripImageName.value || undefined,
+      store.state.config,
+      store.state.githubToken,
+    );
     const average = result.averageFuelConsumptionPer100Km;
     const distance = result.distanceKm;
 

@@ -1046,6 +1046,59 @@ async function saveTripImageFile(imageDataUrl, imageFileName) {
   };
 }
 
+function buildTripImageGithubFilePath(recordsDir, outputFileName) {
+  const normalizedRecordsDir = normalizeRepoPath(recordsDir);
+  return `${normalizedRecordsDir}/trip-images/${outputFileName}`;
+}
+
+function buildGithubRawFileUrl(owner, repo, branch, filePath) {
+  const safeOwner = normalizeNonEmptyString(owner, 120);
+  const safeRepo = normalizeNonEmptyString(repo, 120);
+  const safeBranch = normalizeNonEmptyString(branch, 160);
+  const safePath = normalizeRepoPath(filePath);
+  if (!safeOwner || !safeRepo || !safeBranch || !safePath) {
+    return undefined;
+  }
+
+  return `https://raw.githubusercontent.com/${encodeURIComponent(safeOwner)}/${encodeURIComponent(safeRepo)}/${encodeURIComponent(safeBranch)}/${safePath
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')}`;
+}
+
+async function saveTripImageToGithub(imageDataUrl, imageFileName, githubContext) {
+  const parsed = parseImageDataUrl(imageDataUrl);
+  const extension = inferFileExtensionFromMimeType(parsed.mimeType);
+  const safeFileName = sanitizeTripImageFileName(imageFileName, extension);
+  const uniquePrefix = `${Date.now()}-${randomBytes(6).toString('hex')}`;
+  const outputFileName = `${uniquePrefix}-${safeFileName}`;
+  const path = buildTripImageGithubFilePath(githubContext.recordsDir, outputFileName);
+  const pat = resolveGithubPatForRequest(githubContext.tokenCandidate);
+  const putResult = await putGithubFileByPat({
+    pat,
+    owner: githubContext.owner,
+    repo: githubContext.repo,
+    branch: githubContext.branch,
+    path,
+    message: `chore(trip-ai): upload dashboard image ${uniquePrefix}`,
+    content: parsed.buffer.toString('base64'),
+  });
+
+  const content = putResult && typeof putResult === 'object' ? putResult.content : null;
+  const savedImagePath =
+    content && typeof content === 'object' && typeof content.path === 'string' && content.path.trim() ? content.path.trim() : path;
+  const savedImageUrl =
+    content && typeof content === 'object' && typeof content.download_url === 'string' && content.download_url.trim()
+      ? content.download_url.trim()
+      : buildGithubRawFileUrl(githubContext.owner, githubContext.repo, githubContext.branch, savedImagePath);
+
+  return {
+    savedImagePath,
+    savedImageUrl,
+    storage: 'github',
+  };
+}
+
 async function callOpenAiForTripImage(imageDataUrl) {
   if (!OPENAI_API_KEY) {
     throw new Error('后端未配置 OPENAI_API_KEY。');
