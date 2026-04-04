@@ -90,7 +90,7 @@ Copy-Item backend/.env.example backend/.env
 | `VAPID_PRIVATE_KEY` | 是 | 无 | `...` | Web Push 私钥。 |
 | `VAPID_SUBJECT` | 是 | 无 | `mailto:you@example.com` | Web Push 必填标识。 |
 | `INTERNAL_TICK_TOKEN` | 是 | 无 | `8f5c...` | 保护 `/internal/tick`。 |
-| `TICK_GITHUB_TOKEN` | 是 | 无 | `github_pat_...` | tick 扫描时访问 GitHub 的 token。支持明文 PAT 或 sealed token。 |
+| `TICK_GITHUB_TOKEN` | 是 | 无 | `<github-pat-token>` | tick 扫描时访问 GitHub 的 token。支持明文 PAT 或 sealed token。 |
 | `TICK_GITHUB_OWNER` | 是 | 无 | `foxmaybeOI1761640545` | 目标仓库 owner。 |
 | `TICK_GITHUB_REPO` | 是 | 无 | `car-expense-journal-1774354845-V5.1` | 目标仓库名。 |
 | `TICK_GITHUB_RECORDS_DIR` | 是 | 无 | `data/records` | 与前端配置一致。 |
@@ -130,7 +130,7 @@ VAPID_SUBJECT=mailto:you@example.com
 
 INTERNAL_TICK_TOKEN=<random-hex-token>
 
-TICK_GITHUB_TOKEN=github_pat_xxxxxxxxxxxxxxxxxxxx
+TICK_GITHUB_TOKEN=<github-pat-token>
 TICK_GITHUB_OWNER=foxmaybeOI1761640545
 TICK_GITHUB_REPO=car-expense-journal-1774354845-V5.1
 TICK_GITHUB_BRANCH=records/live-data

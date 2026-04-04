@@ -71,7 +71,7 @@
 请求：
 ```json
 {
-  "pat": "github_pat_xxx"
+  "pat": "<github-pat-token>"
 }
 ```
 
