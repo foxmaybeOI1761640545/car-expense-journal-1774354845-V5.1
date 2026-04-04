@@ -1,0 +1,20 @@
+{
+  "id": "trip-90e9c3e0-d4a5-4221-8316-417fc440bacf",
+  "type": "trip",
+  "occurredAt": "2026-04-04T11:58:00.000Z",
+  "occurredAtUnix": 1775303880,
+  "createdAt": "2026-04-04T11:58:20.378Z",
+  "createdAtUnix": 1775303900,
+  "updatedAt": "2026-04-04T11:58:20.378Z",
+  "updatedAtUnix": 1775303900,
+  "sourceDeviceId": "device-801257d0-cf16-4f22-9a0d-9d00c27b4ae2",
+  "sourceDeviceName": "当前设备",
+  "averageFuelConsumptionPer100Km": 12.9,
+  "distanceKm": 3.6,
+  "consumedFuelLiters": 0.464,
+  "pricePerLiter": 7.66,
+  "totalFuelCostCny": 3.55,
+  "note": "test",
+  "submittedToGithub": false,
+  "githubSubmittedTargets": []
+}
