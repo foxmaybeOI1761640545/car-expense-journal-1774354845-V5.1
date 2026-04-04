@@ -16,12 +16,13 @@
     6,
     7
   ],
-  "status": "pending",
+  "status": "cancelled",
   "soundEnabled": true,
   "notificationEnabled": true,
   "requiresAcknowledgement": false,
   "createdAtUnix": 1775323727,
-  "updatedAtUnix": 1775323728,
+  "updatedAtUnix": 1775345400,
+  "cancelledAtUnix": 1775345400,
   "retryCount": 0,
-  "source": "frontend"
+  "source": "frontend-cancel"
 }
