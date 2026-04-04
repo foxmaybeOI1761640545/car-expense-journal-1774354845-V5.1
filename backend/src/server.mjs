@@ -44,6 +44,7 @@ const ENABLE_CODEX_CLI_FALLBACK = parseBooleanEnv(process.env.ENABLE_CODEX_CLI_F
 const TRIP_AI_CODEX_CLI_BIN = normalizeNonEmptyString(process.env.TRIP_AI_CODEX_CLI_BIN || '', 260) || 'codex';
 const TRIP_AI_CODEX_CLI_MODEL = normalizeNonEmptyString(process.env.TRIP_AI_CODEX_CLI_MODEL || '', 120) || 'gpt-5.3-codex';
 const TRIP_AI_CODEX_CLI_TIMEOUT_MS = clampInteger(process.env.TRIP_AI_CODEX_CLI_TIMEOUT_MS, 180 * 1000, 5000, 10 * 60 * 1000);
+const CODEX_HOME = normalizeNonEmptyString(process.env.CODEX_HOME || '', 1000);
 const OPENAI_FALLBACK_HTTP_STATUS_CODES = new Set([401, 403, 429]);
 const TRIP_IMAGE_UPLOAD_DIR = resolveTripImageUploadDirectory(process.env.TRIP_IMAGE_UPLOAD_DIR || '');
 const TRIP_IMAGE_PUBLIC_ROOT_DIR = path.resolve(BACKEND_ROOT_DIR, 'uploads');
@@ -201,6 +202,154 @@ function resolveTripImageUploadDirectory(raw) {
   }
 
   return path.resolve(BACKEND_ROOT_DIR, normalized);
+}
+
+function isValidUrlValue(value) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function validateBooleanEnvLiteral(name, raw, issues) {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return;
+  }
+
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') {
+    return;
+  }
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') {
+    return;
+  }
+
+  issues.push(`${name}: invalid boolean literal "${raw}".`);
+}
+
+function validateIntegerEnvLiteral(name, raw, min, max, issues, options = {}) {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return;
+  }
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    issues.push(`${name}: expected number, got "${raw}".`);
+    return;
+  }
+
+  const rounded = Math.floor(parsed);
+  if (options.allowZero && rounded === 0) {
+    return;
+  }
+
+  if (rounded < min || rounded > max) {
+    issues.push(`${name}: out of range, expected ${options.allowZero ? `0 or ${min}` : min}..${max}, got ${rounded}.`);
+  }
+}
+
+function validateRepoPathEnv(name, raw, issues) {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return;
+  }
+  if (!normalizeRepoPath(raw)) {
+    issues.push(`${name}: invalid path "${raw}".`);
+  }
+}
+
+function validateRuntimeEnvironmentSync() {
+  const issues = [];
+
+  validateBooleanEnvLiteral('ENABLE_PORT_FALLBACK', process.env.ENABLE_PORT_FALLBACK, issues);
+  validateBooleanEnvLiteral('ENABLE_CODEX_CLI_FALLBACK', process.env.ENABLE_CODEX_CLI_FALLBACK, issues);
+
+  validateIntegerEnvLiteral('MAX_PORT_FALLBACK_STEPS', process.env.MAX_PORT_FALLBACK_STEPS, 0, 200, issues);
+  validateIntegerEnvLiteral('MAX_SEAL_JSON_BODY_BYTES', process.env.MAX_SEAL_JSON_BODY_BYTES, 1024, 256 * 1024, issues);
+  validateIntegerEnvLiteral('MAX_GITHUB_PROXY_BODY_BYTES', process.env.MAX_GITHUB_PROXY_BODY_BYTES, 32 * 1024, 32 * 1024 * 1024, issues);
+  validateIntegerEnvLiteral('MAX_PUSH_JSON_BODY_BYTES', process.env.MAX_PUSH_JSON_BODY_BYTES, 4 * 1024, 2 * 1024 * 1024, issues);
+  validateIntegerEnvLiteral('MAX_REMINDER_JSON_BODY_BYTES', process.env.MAX_REMINDER_JSON_BODY_BYTES, 4 * 1024, 2 * 1024 * 1024, issues);
+  validateIntegerEnvLiteral('MAX_TRIP_AI_JSON_BODY_BYTES', process.env.MAX_TRIP_AI_JSON_BODY_BYTES, 1, Number.MAX_SAFE_INTEGER, issues, {
+    allowZero: true,
+  });
+  validateIntegerEnvLiteral('TICK_MAX_ENTITY_FILES', process.env.TICK_MAX_ENTITY_FILES, 10, 5000, issues);
+  validateIntegerEnvLiteral('TICK_MAX_DUE_REMINDERS', process.env.TICK_MAX_DUE_REMINDERS, 1, 1000, issues);
+  validateIntegerEnvLiteral('TICK_DUE_LOOKBACK_SECONDS', process.env.TICK_DUE_LOOKBACK_SECONDS, 60, 365 * 24 * 3600, issues);
+  validateIntegerEnvLiteral('TICK_PUSH_TTL_SECONDS', process.env.TICK_PUSH_TTL_SECONDS, 60, 24 * 3600, issues);
+  validateIntegerEnvLiteral('TRIP_AI_CODEX_CLI_TIMEOUT_MS', process.env.TRIP_AI_CODEX_CLI_TIMEOUT_MS, 5000, 10 * 60 * 1000, issues);
+
+  if (typeof process.env.OPENAI_API_BASE_URL === 'string' && process.env.OPENAI_API_BASE_URL.trim()) {
+    if (!isValidUrlValue(process.env.OPENAI_API_BASE_URL.trim())) {
+      issues.push(`OPENAI_API_BASE_URL: invalid URL "${process.env.OPENAI_API_BASE_URL}".`);
+    }
+  }
+
+  if (typeof process.env.CORS_ORIGINS === 'string' && process.env.CORS_ORIGINS.trim()) {
+    const origins = parseCorsOrigins(process.env.CORS_ORIGINS);
+    for (const origin of origins) {
+      if (origin === '*') {
+        continue;
+      }
+      if (isWildcardCorsRule(origin)) {
+        continue;
+      }
+      if (!isValidUrlValue(origin)) {
+        issues.push(`CORS_ORIGINS: invalid origin "${origin}".`);
+      }
+    }
+  }
+
+  if (typeof process.env.PAT_WRAP_KEY_BASE64 === 'string' && process.env.PAT_WRAP_KEY_BASE64.trim()) {
+    if (!resolvePatWrapKey(process.env.PAT_WRAP_KEY_BASE64)) {
+      issues.push('PAT_WRAP_KEY_BASE64: invalid base64 key (must decode to 32 bytes).');
+    }
+  }
+
+  if (typeof process.env.PAT_WRAP_KEY_VERSION === 'string' && !normalizeNonEmptyString(process.env.PAT_WRAP_KEY_VERSION, 60)) {
+    issues.push('PAT_WRAP_KEY_VERSION: must not be empty string.');
+  }
+
+  if (typeof process.env.VAPID_SUBJECT === 'string' && process.env.VAPID_SUBJECT.trim()) {
+    const subject = process.env.VAPID_SUBJECT.trim();
+    if (!/^mailto:/i.test(subject) && !isValidUrlValue(subject)) {
+      issues.push(`VAPID_SUBJECT: invalid value "${subject}" (expected mailto: or URL).`);
+    }
+  }
+
+  validateRepoPathEnv('TICK_GITHUB_RECORDS_DIR', process.env.TICK_GITHUB_RECORDS_DIR, issues);
+
+  if (!OPENAI_API_KEY && !ENABLE_CODEX_CLI_FALLBACK) {
+    issues.push('OPENAI_API_KEY: missing while ENABLE_CODEX_CLI_FALLBACK is disabled.');
+  }
+
+  return issues;
+}
+
+async function validateRuntimeEnvironment() {
+  const issues = validateRuntimeEnvironmentSync();
+  const details = {};
+
+  if (ENABLE_CODEX_CLI_FALLBACK) {
+    const codexHomePath = CODEX_HOME ? path.resolve(CODEX_HOME) : path.resolve(os.homedir(), '.codex');
+    const authPath = path.join(codexHomePath, 'auth.json');
+    details.codexHomePath = codexHomePath;
+    details.codexAuthPath = authPath;
+
+    try {
+      const stat = await fs.stat(authPath);
+      if (!stat.isFile()) {
+        issues.push(`CODEX_HOME: "${authPath}" exists but is not a file.`);
+      }
+    } catch {
+      issues.push(`CODEX_HOME: missing auth file "${authPath}".`);
+    }
+  }
+
+  return {
+    issues,
+    details,
+  };
 }
 
 function resolveCorsOrigin(origin) {
@@ -3130,6 +3279,16 @@ function listenOnPort(port) {
 async function startServer() {
   let port = REQUESTED_PORT;
   let fallbackSteps = 0;
+  let envValidationResult = {
+    issues: [],
+    details: {},
+  };
+
+  try {
+    envValidationResult = await validateRuntimeEnvironment();
+  } catch (error) {
+    console.warn(`[${SERVICE_NAME}] env validation execution failed: ${normalizeErrorMessage(error)}`);
+  }
 
   while (fallbackSteps <= MAX_PORT_FALLBACK_STEPS) {
     try {
@@ -3156,6 +3315,17 @@ async function startServer() {
           TICK_GITHUB_TOKEN && TICK_GITHUB_OWNER && TICK_GITHUB_REPO && TICK_GITHUB_RECORDS_DIR ? 'configured' : 'missing'
         }`,
       );
+      if (ENABLE_CODEX_CLI_FALLBACK && envValidationResult.details.codexAuthPath) {
+        console.log(`[${SERVICE_NAME}] codex auth path: ${envValidationResult.details.codexAuthPath}`);
+      }
+      if (envValidationResult.issues.length > 0) {
+        console.warn(`[${SERVICE_NAME}] env validation found ${envValidationResult.issues.length} issue(s):`);
+        for (const issue of envValidationResult.issues) {
+          console.warn(`[${SERVICE_NAME}] env invalid: ${issue}`);
+        }
+      } else {
+        console.log(`[${SERVICE_NAME}] env validation: no issues detected.`);
+      }
       if (fallbackUsed) {
         console.warn(`[${SERVICE_NAME}] requested port ${REQUESTED_PORT} is busy, fallback to ${port}`);
       }
