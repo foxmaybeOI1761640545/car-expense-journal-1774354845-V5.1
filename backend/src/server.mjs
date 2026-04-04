@@ -1143,8 +1143,12 @@ async function callOpenAiForTripImage(imageDataUrl) {
 
   const payload = await parseGithubResponseBody(response);
   if (!response.ok) {
-    const message = extractGithubErrorMessage(payload, `HTTP ${response.status}`);
-    throw new Error(`OpenAI 调用失败：${message}`);
+    const detail = extractOpenAiErrorMessage(payload, '');
+    const error = new Error(`OpenAI 调用失败（HTTP ${response.status}）${detail ? `：${detail}` : ''}`);
+    error.code = 'OPENAI_REQUEST_FAILED';
+    error.openAiStatus = response.status;
+    error.openAiDetail = detail;
+    throw error;
   }
 
   const outputText = extractOpenAiOutputText(payload);
@@ -1189,6 +1193,34 @@ function extractGithubErrorMessage(body, fallback) {
   if (body && typeof body === 'object' && typeof body.message === 'string' && body.message.trim()) {
     return body.message.trim();
   }
+  return fallback;
+}
+
+function extractOpenAiErrorMessage(body, fallback) {
+  if (body && typeof body === 'object') {
+    if (typeof body.message === 'string' && body.message.trim()) {
+      return body.message.trim();
+    }
+
+    const errorBody = body.error;
+    if (errorBody && typeof errorBody === 'object' && typeof errorBody.message === 'string' && errorBody.message.trim()) {
+      const message = errorBody.message.trim();
+      const code = typeof errorBody.code === 'string' ? errorBody.code.trim() : '';
+      const type = typeof errorBody.type === 'string' ? errorBody.type.trim() : '';
+
+      if (code && type) {
+        return `${message} (type=${type}, code=${code})`;
+      }
+      if (code) {
+        return `${message} (code=${code})`;
+      }
+      if (type) {
+        return `${message} (type=${type})`;
+      }
+      return message;
+    }
+  }
+
   return fallback;
 }
 
@@ -2563,6 +2595,7 @@ async function handleGithubContentsProxyRequest(req, res, origin, mode) {
 function validateTripAiExtractBody(body) {
   const imageDataUrl = typeof body?.imageDataUrl === 'string' ? body.imageDataUrl.trim() : '';
   const imageFileName = normalizeNonEmptyString(body?.imageFileName, 260);
+  const github = parsePushGithubContext(body);
 
   if (!imageDataUrl) {
     return {
@@ -2582,6 +2615,7 @@ function validateTripAiExtractBody(body) {
     ok: true,
     imageDataUrl,
     imageFileName: imageFileName || undefined,
+    github: github || undefined,
   };
 }
 
@@ -2673,9 +2707,20 @@ async function handleTripAiExtractRequest(req, res, origin) {
     }
 
     const rawText = await callOpenAiForTripImage(validated.imageDataUrl);
-    const savedImage = await saveTripImageFile(validated.imageDataUrl, validated.imageFileName);
+    let savedImagePath = '';
+    let savedImageUrl;
+
+    if (validated.github) {
+      const savedImage = await saveTripImageToGithub(validated.imageDataUrl, validated.imageFileName, validated.github);
+      savedImagePath = savedImage.savedImagePath;
+      savedImageUrl = savedImage.savedImageUrl;
+    } else {
+      const savedImage = await saveTripImageFile(validated.imageDataUrl, validated.imageFileName);
+      savedImagePath = savedImage.savedImagePath;
+      savedImageUrl = savedImage.isPublic ? buildAbsoluteUrlFromRequest(req, savedImage.savedImagePath) : undefined;
+    }
+
     const metrics = extractTripMetricsFromAiText(rawText);
-    const savedImageUrl = savedImage.isPublic ? buildAbsoluteUrlFromRequest(req, savedImage.savedImagePath) : undefined;
 
     writeJson(
       res,
@@ -2684,7 +2729,7 @@ async function handleTripAiExtractRequest(req, res, origin) {
         ok: true,
         averageFuelConsumptionPer100Km: metrics.averageFuelConsumptionPer100Km,
         distanceKm: metrics.distanceKm,
-        savedImagePath: savedImage.savedImagePath,
+        savedImagePath,
         savedImageUrl,
         rawText,
       },
@@ -2700,15 +2745,20 @@ async function handleTripAiExtractRequest(req, res, origin) {
       return;
     }
 
-    writeJson(
-      res,
-      502,
-      {
-        ok: false,
-        message: error instanceof Error ? error.message : 'AI extract failed.',
-      },
-      origin,
-    );
+    const payload = {
+      ok: false,
+      message: error instanceof Error ? error.message : 'AI extract failed.',
+    };
+    const openAiStatusRaw = Number(error?.openAiStatus);
+    if (Number.isFinite(openAiStatusRaw) && openAiStatusRaw >= 100 && openAiStatusRaw <= 599) {
+      payload.openAiStatus = Math.floor(openAiStatusRaw);
+    }
+    const openAiDetail = normalizeNonEmptyString(error?.openAiDetail, 1000);
+    if (openAiDetail) {
+      payload.openAiDetail = openAiDetail;
+    }
+
+    writeJson(res, 502, payload, origin);
   }
 }
 

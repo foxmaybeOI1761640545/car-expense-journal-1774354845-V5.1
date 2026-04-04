@@ -12,6 +12,8 @@ export interface TripAiExtractResult {
 interface TripAiExtractPayload {
   ok?: unknown;
   message?: unknown;
+  openAiStatus?: unknown;
+  openAiDetail?: unknown;
   averageFuelConsumptionPer100Km?: unknown;
   distanceKm?: unknown;
   savedImagePath?: unknown;
@@ -116,7 +118,37 @@ function parseTripAiExtractPayload(payload: unknown): TripAiExtractResult {
 async function tryReadResponseMessage(response: Response): Promise<string | null> {
   try {
     const payload = (await response.json()) as TripAiExtractPayload;
-    return parseOptionalText(payload.message) ?? null;
+    const message = parseOptionalText(payload.message);
+    const openAiDetail = parseOptionalText(payload.openAiDetail);
+    const openAiStatusRaw = Number(payload.openAiStatus);
+    const openAiStatus =
+      Number.isFinite(openAiStatusRaw) && openAiStatusRaw >= 100 && openAiStatusRaw <= 599 ? Math.floor(openAiStatusRaw) : undefined;
+
+    if (message && openAiDetail && !message.includes(openAiDetail)) {
+      return `${message} (${openAiDetail})`;
+    }
+
+    if (message && openAiStatus !== undefined && !message.includes(`HTTP ${openAiStatus}`)) {
+      return `${message} (OpenAI HTTP ${openAiStatus})`;
+    }
+
+    if (message) {
+      return message;
+    }
+
+    if (openAiDetail && openAiStatus !== undefined) {
+      return `OpenAI HTTP ${openAiStatus}: ${openAiDetail}`;
+    }
+
+    if (openAiDetail) {
+      return openAiDetail;
+    }
+
+    if (openAiStatus !== undefined) {
+      return `OpenAI HTTP ${openAiStatus}`;
+    }
+
+    return null;
   } catch {
     return null;
   }
