@@ -1,0 +1,27 @@
+# Docs 分类索引
+
+## conventions
+
+- `conventions/COMMIT_CONVENTION.md`
+
+## deployment
+
+- `deployment/ONLINE_REMINDER_RENDER_UPTIMEROBOT_GUIDE.md`
+- `deployment/REMINDER_AUTOPUSH_BACKEND_DEPLOYMENT_GUIDE.md`
+- `deployment/REMINDER_AUTOPUSH_BACKEND_DEPLOYMENT_GUIDE-记录旧环境变量.md`
+- `deployment/REMINDER_BACKEND_DEPLOY_RENDER_UPTIMEROBOT.md`
+
+## plans
+
+- `plans/DEVICE_PROFILE_SHARED_RECORDS_PLAN.md`
+- `plans/DEVICE_SYNC_FEASIBILITY.md`
+- `plans/LOCKSCREEN_PUSH_REMINDER_REQUIREMENTS_AND_PLAN.md`
+- `plans/RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md`
+
+## migrations
+
+- `migrations/PAT_BACKEND_PROCESS_ONLY_MIGRATION.md`
+
+## analysis
+
+- `analysis/TRIP_CAMERA_UPLOAD_DESKTOP_ANALYSIS.md`

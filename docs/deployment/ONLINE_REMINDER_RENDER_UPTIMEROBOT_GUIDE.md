@@ -223,7 +223,7 @@ backend/
 
 后续再做时，建议直接参考：
 
-- [RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md](./RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md)
+- [RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md](../plans/RENDER_UPTIMEROBOT_FULLSTACK_PLAN.md)
 
 ## 10. 常见误区
 
@@ -244,4 +244,3 @@ backend/
 1. 接入“零 Render 存储模式”（任务写 GitHub JSON）。
 2. 新增 `/internal/tick` 和 UptimeRobot 调度监控。
 3. 再补邮件提醒或 Web Push 作为网页关闭后的兜底通道。
-
