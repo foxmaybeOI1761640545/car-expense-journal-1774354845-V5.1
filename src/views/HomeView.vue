@@ -97,6 +97,37 @@
         </template>
       </article>
 
+      <article v-if="isMobile" class="card summary-card home-shortcut-card">
+        <div class="home-shortcut-card__head">
+          <h2>快捷入口</h2>
+          <span class="muted">{{ selectedQuickPageIds.length }}/{{ QUICK_PAGE_OPTIONS.length }}</span>
+        </div>
+        <p class="muted">选择页面后生成快捷键，点击即可直接跳转。</p>
+
+        <div class="home-shortcut-add">
+          <label>
+            新增页面快捷入口
+            <select v-model="quickPageCandidateId">
+              <option value="">请选择页面</option>
+              <option v-for="option in availableQuickPageOptions" :key="option.id" :value="option.id">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+          <button class="btn btn--ghost" type="button" :disabled="!quickPageCandidateId" @click="addQuickPageShortcut">新增快捷入口</button>
+        </div>
+
+        <ul v-if="selectedQuickPageOptions.length" class="home-shortcut-list">
+          <li v-for="option in selectedQuickPageOptions" :key="option.id" class="home-shortcut-item">
+            <button class="btn btn--secondary home-shortcut-link" type="button" @click="openQuickPage(option.id)">
+              {{ option.label }}
+            </button>
+            <button class="btn btn--ghost" type="button" @click="removeQuickPageShortcut(option.id)">移除</button>
+          </li>
+        </ul>
+        <p v-else class="muted">暂无快捷入口，请先新增。</p>
+      </article>
+
       <article class="card summary-card">
         <h2>最近一次加油</h2>
         <template v-if="latestFuelRecord">
@@ -107,7 +138,7 @@
         </template>
         <p v-else class="muted">暂无加油记录</p>
       </article>
-
+      
       <article class="card summary-card">
         <h2>最近一次耗油</h2>
         <template v-if="latestTripRecord">
@@ -274,6 +305,24 @@ import { formatCurrency, formatNumber, parsePositiveNumber, roundTo } from '../u
 const router = useRouter();
 const store = useAppStore();
 const MOBILE_BREAKPOINT = 767;
+const MOBILE_QUICK_SHORTCUT_STORAGE_KEY = 'home-mobile-quick-page-shortcuts';
+
+type QuickPageId = 'fuel-form' | 'fuel-history' | 'trip-form' | 'trip-history';
+
+interface QuickPageOption {
+  id: QuickPageId;
+  label: string;
+  path: string;
+}
+
+const QUICK_PAGE_OPTIONS: QuickPageOption[] = [
+  { id: 'fuel-form', label: '加油记录表单', path: '/fuel/form' },
+  { id: 'fuel-history', label: '加油历史', path: '/fuel/history' },
+  { id: 'trip-form', label: '耗油记录表单', path: '/trip/form' },
+  { id: 'trip-history', label: '耗油历史', path: '/trip/history' },
+];
+
+const QUICK_PAGE_OPTION_MAP = new Map<QuickPageId, QuickPageOption>(QUICK_PAGE_OPTIONS.map((option) => [option.id, option]));
 const isSubmittingAll = ref(false);
 const isSyncingFromGithub = ref(false);
 const isSyncingFuelBalanceAdjustments = ref(false);
@@ -287,9 +336,62 @@ const isClearingLocalCache = ref(false);
 const isMobile = ref(false);
 const isWelcomeActionsCollapsed = ref(true);
 const isOverviewCollapsed = ref(true);
+const selectedQuickPageIds = ref<QuickPageId[]>(loadQuickPageIds());
+const quickPageCandidateId = ref<QuickPageId | ''>('');
 
 function isSealedGithubToken(value: string): boolean {
   return /^pat\.sealed\.[^.]+\./.test(value.trim());
+}
+
+function loadQuickPageIds(): QuickPageId[] {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const raw = window.localStorage.getItem(MOBILE_QUICK_SHORTCUT_STORAGE_KEY);
+    if (!raw) {
+      return [];
+    }
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const unique = new Set<QuickPageId>();
+    const result: QuickPageId[] = [];
+
+    for (const item of parsed) {
+      if (typeof item !== 'string') {
+        continue;
+      }
+
+      if (!QUICK_PAGE_OPTION_MAP.has(item as QuickPageId)) {
+        continue;
+      }
+
+      const id = item as QuickPageId;
+      if (unique.has(id)) {
+        continue;
+      }
+
+      unique.add(id);
+      result.push(id);
+    }
+
+    return result;
+  } catch {
+    return [];
+  }
+}
+
+function persistQuickPageIds(): void {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.localStorage.setItem(MOBILE_QUICK_SHORTCUT_STORAGE_KEY, JSON.stringify(selectedQuickPageIds.value));
 }
 
 const recordsRef = computed(() => store.state.records);
@@ -310,6 +412,15 @@ const pendingFuelBalanceAdjustmentCount = computed(
 );
 const showWelcomeExtendedActions = computed(() => !isMobile.value || !isWelcomeActionsCollapsed.value);
 const showOverviewDetails = computed(() => !isMobile.value || !isOverviewCollapsed.value);
+const selectedQuickPageOptions = computed(() =>
+  selectedQuickPageIds.value
+    .map((id) => QUICK_PAGE_OPTION_MAP.get(id))
+    .filter((option): option is QuickPageOption => option !== undefined),
+);
+const availableQuickPageOptions = computed(() => {
+  const selectedSet = new Set(selectedQuickPageIds.value);
+  return QUICK_PAGE_OPTIONS.filter((option) => !selectedSet.has(option.id));
+});
 const currentDeviceIdText = computed(() => {
   const value = store.state.deviceMeta.deviceId.trim();
   if (!value) {
@@ -371,6 +482,18 @@ watch(
   { immediate: true },
 );
 
+watch(
+  availableQuickPageOptions,
+  (options) => {
+    if (!quickPageCandidateId.value || options.some((option) => option.id === quickPageCandidateId.value)) {
+      return;
+    }
+
+    quickPageCandidateId.value = options[0]?.id ?? '';
+  },
+  { immediate: true },
+);
+
 onMounted(() => {
   syncMobileState();
   window.addEventListener('resize', syncMobileState);
@@ -398,6 +521,41 @@ function toggleOverviewDetails(): void {
   }
 
   isOverviewCollapsed.value = !isOverviewCollapsed.value;
+}
+
+function addQuickPageShortcut(): void {
+  if (!quickPageCandidateId.value) {
+    return;
+  }
+
+  if (selectedQuickPageIds.value.includes(quickPageCandidateId.value)) {
+    store.showToast('该快捷入口已存在。', 'info');
+    return;
+  }
+
+  selectedQuickPageIds.value = [...selectedQuickPageIds.value, quickPageCandidateId.value];
+  persistQuickPageIds();
+  store.showToast('快捷入口已新增。', 'success');
+}
+
+function removeQuickPageShortcut(pageId: QuickPageId): void {
+  const next = selectedQuickPageIds.value.filter((item) => item !== pageId);
+  if (next.length === selectedQuickPageIds.value.length) {
+    return;
+  }
+
+  selectedQuickPageIds.value = next;
+  persistQuickPageIds();
+  store.showToast('快捷入口已移除。', 'info');
+}
+
+function openQuickPage(pageId: QuickPageId): void {
+  const option = QUICK_PAGE_OPTION_MAP.get(pageId);
+  if (!option) {
+    return;
+  }
+
+  router.push(option.path);
 }
 
 async function saveSettings(): Promise<void> {

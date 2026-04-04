@@ -496,6 +496,50 @@ p {
   gap: 8px;
 }
 
+.home-shortcut-card {
+  grid-column: span 3;
+  display: grid;
+  gap: 10px;
+}
+
+.home-shortcut-card__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.home-shortcut-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+}
+
+.home-shortcut-add label {
+  display: grid;
+  gap: 6px;
+}
+
+.home-shortcut-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.home-shortcut-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.home-shortcut-link {
+  justify-content: flex-start;
+  min-width: 0;
+}
+
 .totals-card {
   grid-column: span 7;
 }
@@ -1792,6 +1836,16 @@ select:focus {
   .list-header {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .home-shortcut-add,
+  .home-shortcut-item {
+    grid-template-columns: 1fr;
+  }
+
+  .home-shortcut-add .btn,
+  .home-shortcut-item .btn {
+    width: 100%;
   }
 
   .trip-mobile-page-actions {
