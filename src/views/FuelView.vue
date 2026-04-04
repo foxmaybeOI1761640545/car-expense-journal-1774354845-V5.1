@@ -1,11 +1,24 @@
 <template>
-  <main class="page page--record">
+  <main class="page page--record page--fuel-record">
     <PageHeader title="加油记录" description="录入油价、油量与价格，支持自动补算与一致性检查。" />
 
+    <section v-if="showMobileFuelSubPageNav" class="fuel-mobile-page-actions">
+      <button class="btn btn--ghost" type="button" :disabled="isFuelFormPage" @click="goToFuelFormPage">加油记录表单</button>
+      <button class="btn btn--ghost" type="button" :disabled="isFuelHistoryPage" @click="goToFuelHistoryPage">加油历史</button>
+    </section>
+
     <section class="record-layout">
-      <article class="card form-card">
+      <article v-if="showFuelFormPanel" class="card form-card">
+        <div class="fuel-panel-head">
         <h2>加油记录表单</h2>
-        <form class="form-grid" @submit.prevent="saveFuelRecord">
+          <div class="inline-actions">
+            <button v-if="isFuelSubPage" class="btn btn--ghost" type="button" @click="goToFuelMainPage">返回加油记录主页</button>
+            <button v-if="isMobileViewport" class="btn btn--ghost" type="button" @click="toggleFuelFormCollapse">
+              {{ shouldCollapseFuelForm ? '展开表单' : '折叠表单' }}
+            </button>
+          </div>
+        </div>
+        <form v-show="!shouldCollapseFuelForm" class="form-grid" @submit.prevent="saveFuelRecord">
           <label>
             地区/省份（可选）
             <input v-model="form.province" type="text" placeholder="如：浙江" />
@@ -78,10 +91,20 @@
         </form>
       </article>
 
-      <article class="card list-card">
-        <div class="list-header">
+      <article v-if="showFuelHistoryPanel" class="card list-card">
+        <div class="fuel-panel-head">
           <h2>加油历史</h2>
           <div class="inline-actions">
+            <button v-if="isFuelSubPage" class="btn btn--ghost" type="button" @click="goToFuelMainPage">返回加油记录主页</button>
+            <button v-if="isMobileViewport" class="btn btn--ghost" type="button" @click="toggleFuelHistoryCollapse">
+              {{ shouldCollapseFuelHistory ? '展开历史' : '折叠历史' }}
+            </button>
+          </div>
+        </div>
+
+        <div v-show="!shouldCollapseFuelHistory" class="fuel-history-content">
+          <div class="list-header">
+            <div class="inline-actions">
             <button class="btn btn--ghost" @click="exportFuelJson">导出 JSON</button>
             <button class="btn btn--ghost" @click="exportFuelCsv">导出 CSV</button>
             <button class="btn btn--secondary" :disabled="isBatchSubmitting || pendingFuelChangeCount === 0" @click="submitAllPendingFuelRecords">
@@ -190,13 +213,15 @@
         </ul>
 
         <p v-else class="muted">暂无符合筛选条件的加油记录。</p>
+              </div>
       </article>
     </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, reactive, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import PageHeader from '../components/PageHeader.vue';
 import { useAppStore } from '../stores/appStore';
 import type { FuelRecord } from '../types/records';
@@ -205,8 +230,24 @@ import { exportCsv, exportJson } from '../utils/export';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
 const CONSISTENCY_TOLERANCE = 0.1;
+const MOBILE_FUEL_BREAKPOINT = 767;
 
+const router = useRouter();
+const route = useRoute();
 const store = useAppStore();
+const isMobileViewport = ref(typeof window !== 'undefined' ? window.innerWidth <= MOBILE_FUEL_BREAKPOINT : false);
+const isFuelFormCollapsed = ref(false);
+const isFuelHistoryCollapsed = ref(false);
+
+const isFuelMainPage = computed(() => route.name === 'fuel');
+const isFuelFormPage = computed(() => route.name === 'fuel-form');
+const isFuelHistoryPage = computed(() => route.name === 'fuel-history');
+const isFuelSubPage = computed(() => isFuelFormPage.value || isFuelHistoryPage.value);
+const showFuelFormPanel = computed(() => !isFuelHistoryPage.value);
+const showFuelHistoryPanel = computed(() => !isFuelFormPage.value);
+const showMobileFuelSubPageNav = computed(() => isMobileViewport.value && isFuelMainPage.value);
+const shouldCollapseFuelForm = computed(() => isMobileViewport.value && isFuelFormCollapsed.value);
+const shouldCollapseFuelHistory = computed(() => isMobileViewport.value && isFuelHistoryCollapsed.value);
 
 const form = reactive({
   province: store.state.config.defaultProvince,
@@ -237,6 +278,97 @@ const submitFilter = ref<'all' | 'submitted' | 'pending'>('all');
 const isBatchSubmitting = ref(false);
 const isSyncingFromGithub = ref(false);
 const editingRecordId = ref<string | null>(null);
+
+function updateMobileViewportState(): void {
+  if (typeof window === 'undefined') {
+    isMobileViewport.value = false;
+    return;
+  }
+
+  isMobileViewport.value = window.innerWidth <= MOBILE_FUEL_BREAKPOINT;
+}
+
+function toggleFuelFormCollapse(): void {
+  if (!isMobileViewport.value) {
+    return;
+  }
+
+  isFuelFormCollapsed.value = !isFuelFormCollapsed.value;
+}
+
+function toggleFuelHistoryCollapse(): void {
+  if (!isMobileViewport.value) {
+    return;
+  }
+
+  isFuelHistoryCollapsed.value = !isFuelHistoryCollapsed.value;
+}
+
+function goToFuelMainPage(): void {
+  if (isFuelMainPage.value) {
+    return;
+  }
+
+  router.push({ name: 'fuel' });
+}
+
+function goToFuelFormPage(): void {
+  if (isFuelFormPage.value) {
+    return;
+  }
+
+  router.push({ name: 'fuel-form' });
+}
+
+function goToFuelHistoryPage(): void {
+  if (isFuelHistoryPage.value) {
+    return;
+  }
+
+  router.push({ name: 'fuel-history' });
+}
+
+onMounted(() => {
+  updateMobileViewportState();
+
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.addEventListener('resize', updateMobileViewportState);
+});
+
+onBeforeUnmount(() => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  window.removeEventListener('resize', updateMobileViewportState);
+});
+
+watch(isMobileViewport, (isMobile) => {
+  if (isMobile) {
+    return;
+  }
+
+  isFuelFormCollapsed.value = false;
+  isFuelHistoryCollapsed.value = false;
+});
+
+watch(
+  () => route.name,
+  () => {
+    if (isFuelFormPage.value) {
+      isFuelHistoryCollapsed.value = false;
+      return;
+    }
+
+    if (isFuelHistoryPage.value) {
+      isFuelFormCollapsed.value = false;
+    }
+  },
+  { immediate: true },
+);
 
 const fuelRecords = computed(() =>
   store.state.records

@@ -23,6 +23,16 @@ const router = createRouter({
       component: FuelView,
     },
     {
+      path: '/fuel/form',
+      name: 'fuel-form',
+      component: FuelView,
+    },
+    {
+      path: '/fuel/history',
+      name: 'fuel-history',
+      component: FuelView,
+    },
+    {
       path: '/trip',
       name: 'trip',
       component: TripView,
