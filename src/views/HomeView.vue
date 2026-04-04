@@ -20,7 +20,7 @@
       <div class="quick-actions">
         <button class="btn btn--primary btn--large" @click="router.push('/fuel')">加油记录</button>
         <button class="btn btn--secondary btn--large" @click="router.push('/trip')">耗油记录</button>
-        <button class="btn btn--secondary btn--large" @click="router.push('/reminder')">提醒中心</button>
+        <button class="btn btn--primary btn--large" @click="router.push('/reminder')">提醒中心</button>
         <template v-if="showWelcomeExtendedActions">
           <button class="btn btn--secondary btn--large" :disabled="isSubmittingAll || !pendingRecordCount" @click="submitAllPendingRecords">
             {{ isSubmittingAll ? '提交中...' : `一键提交未提交（${pendingRecordCount}）` }}
