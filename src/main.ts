@@ -3,6 +3,7 @@ import App from './App.vue';
 import router from './router';
 import './assets/styles/main.css';
 import { useAppStore } from './stores/appStore';
+import { initializeAppTheme } from './services/themeService';
 
 async function registerServiceWorker(): Promise<void> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
@@ -20,6 +21,7 @@ async function registerServiceWorker(): Promise<void> {
 }
 
 async function bootstrap() {
+  initializeAppTheme();
   const store = useAppStore();
   await store.initializeStore();
 

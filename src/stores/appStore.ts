@@ -8,6 +8,7 @@ import type { AppStoreState, FuelBalanceAdjustmentLog, FuelBalanceState } from '
 import { createEmptyFuelBalance, recalculateFuelBalance } from '../services/balanceService';
 import { applyBranding } from '../services/brandingService';
 import { loadConfigFile, resolveAppConfig } from '../services/configService';
+import { applyAppTheme } from '../services/themeService';
 import {
   appendFuelBalanceAdjustmentToGithub,
   fetchRecordsFromGithub,
@@ -24,6 +25,7 @@ import { resolveReminderBackendBaseUrl } from '../services/reminderBackendUrlSer
 import {
   clearAppData,
   clearLocalConfig,
+  clearThemePreference,
   loadAppData,
   loadDeviceMeta,
   loadLegacyGithubTokenFromLocalConfig,
@@ -915,6 +917,7 @@ async function clearLocalCache(options: ClearLocalCacheOptions = {}): Promise<vo
 
   clearAppData();
   clearLocalConfig();
+  clearThemePreference();
   clearReminderTasksStorage();
   clearReminderRingtoneConfig();
   clearReminderRingtoneSourceModeStorage();
@@ -922,6 +925,7 @@ async function clearLocalCache(options: ClearLocalCacheOptions = {}): Promise<vo
   clearPomodoroStageSettingsStorage();
 
   state.config = resolveAppConfig(fileConfig, {});
+  applyAppTheme('day');
   applyBranding(state.config);
   state.deviceMeta = preservedDeviceMeta;
   state.userProfile = { ...DEFAULT_USER_PROFILE };

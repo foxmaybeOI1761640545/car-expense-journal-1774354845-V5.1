@@ -7,6 +7,9 @@ import type { FuelBalanceAdjustmentLog, FuelBalanceState } from '../types/store'
 const APP_DATA_KEY = 'car-journal-app-data-v1';
 const APP_CONFIG_KEY = 'car-journal-config-v1';
 const DEVICE_META_KEY = 'car-journal-device-meta-v1';
+const THEME_PREFERENCE_KEY = 'car-journal-theme-preference-v1';
+
+export type ThemePreference = 'day' | 'night';
 
 interface LegacyLocalConfigWithToken extends Partial<AppConfig> {
   githubToken?: unknown;
@@ -68,6 +71,20 @@ export function saveDeviceMeta(deviceMeta: DeviceMeta): void {
 
 export function clearDeviceMeta(): void {
   localStorage.removeItem(DEVICE_META_KEY);
+}
+
+export function loadThemePreference(): ThemePreference {
+  const value = localStorage.getItem(THEME_PREFERENCE_KEY);
+  return value === 'night' ? 'night' : 'day';
+}
+
+export function saveThemePreference(theme: ThemePreference): void {
+  const normalized = theme === 'night' ? 'night' : 'day';
+  localStorage.setItem(THEME_PREFERENCE_KEY, normalized);
+}
+
+export function clearThemePreference(): void {
+  localStorage.removeItem(THEME_PREFERENCE_KEY);
 }
 
 export function loadLegacyGithubTokenFromLocalConfig(): string | null {

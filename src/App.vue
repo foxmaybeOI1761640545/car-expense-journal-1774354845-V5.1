@@ -11,6 +11,20 @@
           <small>用户管理</small>
         </span>
       </RouterLink>
+      <button
+        class="theme-switch"
+        :class="{ 'theme-switch--night': isNightTheme }"
+        type="button"
+        role="switch"
+        :aria-checked="isNightTheme"
+        :aria-label="isNightTheme ? '切换到日间主题' : '切换到深夜主题'"
+        @click="toggleTheme"
+      >
+        <span class="theme-switch__track" aria-hidden="true">
+          <span class="theme-switch__thumb"></span>
+        </span>
+        <span class="theme-switch__label">{{ isNightTheme ? '深夜' : '日间' }}</span>
+      </button>
       <RouterLink class="global-guide-link" to="/guide" aria-label="打开应用说明">
         <span class="global-guide-link__icon" aria-hidden="true">i</span>
       </RouterLink>
@@ -59,6 +73,7 @@ import {
   stopGlobalReminderRuntime,
   subscribeGlobalAcknowledgementPendingTasks,
 } from './services/reminderGlobalRuntimeService';
+import { applyAppTheme, loadAppTheme, setAppTheme, type AppTheme } from './services/themeService';
 import { useAppStore } from './stores/appStore';
 import type { ReminderTask } from './types/reminder';
 import { toLocalDateTime, unixSecondsToIsoString } from './utils/date';
@@ -66,6 +81,8 @@ import { toLocalDateTime, unixSecondsToIsoString } from './utils/date';
 const store = useAppStore();
 const route = useRoute();
 const toast = computed(() => store.state.toast);
+const currentTheme = ref<AppTheme>(loadAppTheme());
+const isNightTheme = computed(() => currentTheme.value === 'night');
 const hasLocalDisplayName = computed(() => store.state.userProfile.displayName.trim().length > 0);
 const userDisplayName = computed(() => {
   const value = store.state.userProfile.displayName.trim();
@@ -86,6 +103,8 @@ const currentGlobalReminderTriggerText = computed(() => {
   return toLocalDateTime(unixSecondsToIsoString(currentGlobalReminderTask.value.triggerAtUnix));
 });
 let unsubscribeGlobalReminderPending: (() => void) | null = null;
+
+applyAppTheme(currentTheme.value);
 
 watch(
   () => route.name,
@@ -122,6 +141,11 @@ function acknowledgeAllGlobalReminders(): void {
   if (changedCount > 0) {
     store.showToast(`已确认 ${changedCount} 条提醒。`, 'success');
   }
+}
+
+function toggleTheme(): void {
+  const nextTheme: AppTheme = currentTheme.value === 'night' ? 'day' : 'night';
+  currentTheme.value = setAppTheme(nextTheme);
 }
 
 onBeforeUnmount(() => {
