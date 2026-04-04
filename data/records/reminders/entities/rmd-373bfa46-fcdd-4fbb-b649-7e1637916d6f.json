@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "rmd-373bfa46-fcdd-4fbb-b649-7e1637916d6f",
+  "deviceId": "device-801257d0-cf16-4f22-9a0d-9d00c27b4ae2",
+  "kind": "parking",
+  "title": "停车提醒",
+  "durationSeconds": 8100,
+  "triggerAtUnix": 1775292703,
+  "scheduleMode": "countdown",
+  "status": "pending",
+  "soundEnabled": true,
+  "notificationEnabled": true,
+  "requiresAcknowledgement": false,
+  "createdAtUnix": 1775284603,
+  "updatedAtUnix": 1775284605,
+  "retryCount": 0,
+  "source": "frontend"
+}
