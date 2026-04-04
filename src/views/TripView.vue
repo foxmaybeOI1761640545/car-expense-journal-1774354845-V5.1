@@ -78,9 +78,18 @@
           <label class="full-width">
             仪表盘图片（可选）
             <input ref="tripImageInputRef" type="file" accept="image/*" @change="handleTripImageSelected" />
+            <input
+              ref="tripCameraInputRef"
+              type="file"
+              accept="image/*"
+              capture="environment"
+              class="visually-hidden"
+              @change="handleTripImageSelected"
+            />
           </label>
 
           <div class="inline-actions full-width">
+            <button class="btn btn--ghost" type="button" :disabled="isAiExtracting" @click="openTripCameraCapture">拍照上传</button>
             <button class="btn btn--ghost" type="button" :disabled="isAiExtracting || !selectedTripImageDataUrl" @click="extractTripMetricsByAi">
               {{ isAiExtracting ? '识别中...' : 'AI 识别油耗和里程' }}
             </button>
@@ -399,6 +408,7 @@ const newTemplateNote = ref('');
 const noteTemplates = ref<string[]>(loadNoteTemplates());
 const importInputRef = ref<HTMLInputElement | null>(null);
 const tripImageInputRef = ref<HTMLInputElement | null>(null);
+const tripCameraInputRef = ref<HTMLInputElement | null>(null);
 const selectedTripImageName = ref('');
 const selectedTripImageDataUrl = ref('');
 const selectedTripImagePreviewUrl = ref('');
@@ -732,6 +742,13 @@ function clearTripImageSelectionState(): void {
   if (tripImageInputRef.value) {
     tripImageInputRef.value.value = '';
   }
+  if (tripCameraInputRef.value) {
+    tripCameraInputRef.value.value = '';
+  }
+}
+
+function openTripCameraCapture(): void {
+  tripCameraInputRef.value?.click();
 }
 
 function clearTripImage(): void {
