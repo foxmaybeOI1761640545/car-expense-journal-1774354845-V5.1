@@ -1,6 +1,8 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
+import { spawn } from 'node:child_process';
 import path from 'node:path';
+import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { config as loadEnvFile } from 'dotenv';
@@ -38,6 +40,11 @@ const MAX_TRIP_AI_JSON_BODY_BYTES = resolveBodyByteLimit(process.env.MAX_TRIP_AI
 const OPENAI_API_KEY = normalizeNonEmptyString(process.env.OPENAI_API_KEY || '', 8192);
 const OPENAI_API_BASE_URL = normalizeOpenAiApiBaseUrl(process.env.OPENAI_API_BASE_URL || '');
 const OPENAI_TRIP_IMAGE_MODEL = normalizeNonEmptyString(process.env.OPENAI_TRIP_IMAGE_MODEL || '', 120) || 'gpt-4.1-mini';
+const ENABLE_CODEX_CLI_FALLBACK = parseBooleanEnv(process.env.ENABLE_CODEX_CLI_FALLBACK, false);
+const TRIP_AI_CODEX_CLI_BIN = normalizeNonEmptyString(process.env.TRIP_AI_CODEX_CLI_BIN || '', 260) || 'codex';
+const TRIP_AI_CODEX_CLI_MODEL = normalizeNonEmptyString(process.env.TRIP_AI_CODEX_CLI_MODEL || '', 120) || 'gpt-5.3-codex';
+const TRIP_AI_CODEX_CLI_TIMEOUT_MS = clampInteger(process.env.TRIP_AI_CODEX_CLI_TIMEOUT_MS, 180 * 1000, 5000, 10 * 60 * 1000);
+const OPENAI_FALLBACK_HTTP_STATUS_CODES = new Set([401, 403, 429]);
 const TRIP_IMAGE_UPLOAD_DIR = resolveTripImageUploadDirectory(process.env.TRIP_IMAGE_UPLOAD_DIR || '');
 const TRIP_IMAGE_PUBLIC_ROOT_DIR = path.resolve(BACKEND_ROOT_DIR, 'uploads');
 const PAT_WRAP_KEY_VERSION = (process.env.PAT_WRAP_KEY_VERSION || 'v1').trim() || 'v1';
@@ -1099,9 +1106,168 @@ async function saveTripImageToGithub(imageDataUrl, imageFileName, githubContext)
   };
 }
 
+function runCommandWithTimeout(command, args, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+
+    const child = spawn(command, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: process.env,
+    });
+
+    if (child.stdout) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk;
+      });
+    }
+
+    if (child.stderr) {
+      child.stderr.setEncoding('utf8');
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk;
+      });
+    }
+
+    const timer = setTimeout(() => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      child.kill('SIGKILL');
+      const error = new Error(`Process timeout after ${timeoutMs}ms.`);
+      error.code = 'PROCESS_TIMEOUT';
+      reject(error);
+    }, timeoutMs);
+
+    child.on('error', (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      reject(error);
+    });
+
+    child.on('close', (code, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      resolve({
+        code: Number.isFinite(Number(code)) ? Number(code) : -1,
+        signal: signal || null,
+        stdout,
+        stderr,
+      });
+    });
+  });
+}
+
+async function callCodexCliForTripImage(imageDataUrl) {
+  const parsed = parseImageDataUrl(imageDataUrl);
+  const extension = inferFileExtensionFromMimeType(parsed.mimeType);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'trip-ai-codex-'));
+  const imagePath = path.join(tempDir, `trip-image${extension}`);
+  const outputPath = path.join(tempDir, 'codex-last-message.txt');
+  const prompt =
+    'Extract dashboard metrics from the attached image and return JSON only. '
+    + 'Use this exact schema: {"averageFuelConsumptionPer100Km": number|null, "distanceKm": number|null}. '
+    + 'If any field cannot be recognized, return null for that field. '
+    + 'Do not add markdown or explanations.';
+
+  try {
+    await fs.writeFile(imagePath, parsed.buffer);
+    const args = [
+      'exec',
+      '--skip-git-repo-check',
+      '--color',
+      'never',
+      '--output-last-message',
+      outputPath,
+      '-m',
+      TRIP_AI_CODEX_CLI_MODEL,
+      '-i',
+      imagePath,
+      prompt,
+    ];
+    const result = await runCommandWithTimeout(TRIP_AI_CODEX_CLI_BIN, args, TRIP_AI_CODEX_CLI_TIMEOUT_MS);
+    const detail = normalizeNonEmptyString(result.stderr || result.stdout || '', 1000);
+
+    if (result.code !== 0) {
+      const error = new Error(`Codex CLI fallback failed (exit ${result.code})${detail ? `: ${detail}` : '.'}`);
+      error.code = 'CODEX_CLI_FAILED';
+      throw error;
+    }
+
+    let outputText = '';
+    try {
+      outputText = normalizeNonEmptyString(await fs.readFile(outputPath, 'utf8'), 40 * 1000);
+    } catch {
+      outputText = '';
+    }
+
+    if (!outputText) {
+      outputText = normalizeNonEmptyString(result.stdout, 40 * 1000);
+    }
+
+    if (!outputText) {
+      const error = new Error('Codex CLI fallback returned empty output.');
+      error.code = 'CODEX_CLI_EMPTY_OUTPUT';
+      throw error;
+    }
+
+    return outputText;
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      const wrapped = new Error(`Codex CLI fallback is unavailable: command not found (${TRIP_AI_CODEX_CLI_BIN}).`);
+      wrapped.code = 'CODEX_CLI_NOT_FOUND';
+      throw wrapped;
+    }
+    if (error && error.code === 'PROCESS_TIMEOUT') {
+      const wrapped = new Error(`Codex CLI fallback timed out after ${TRIP_AI_CODEX_CLI_TIMEOUT_MS}ms.`);
+      wrapped.code = 'CODEX_CLI_TIMEOUT';
+      throw wrapped;
+    }
+    throw error;
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+function shouldUseCodexCliFallback(error) {
+  if (!ENABLE_CODEX_CLI_FALLBACK) {
+    return false;
+  }
+
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+
+  if (error.code === 'OPENAI_API_KEY_MISSING') {
+    return true;
+  }
+
+  if (error.code !== 'OPENAI_REQUEST_FAILED') {
+    return false;
+  }
+
+  const statusCode = Number(error.openAiStatus);
+  if (!Number.isFinite(statusCode)) {
+    return false;
+  }
+
+  return OPENAI_FALLBACK_HTTP_STATUS_CODES.has(Math.floor(statusCode));
+}
+
 async function callOpenAiForTripImage(imageDataUrl) {
   if (!OPENAI_API_KEY) {
-    throw new Error('后端未配置 OPENAI_API_KEY。');
+    const error = new Error('Backend OPENAI_API_KEY is not configured.');
+    error.code = 'OPENAI_API_KEY_MISSING';
+    throw error;
   }
 
   const response = await fetch(`${OPENAI_API_BASE_URL}/responses`, {
@@ -1144,7 +1310,7 @@ async function callOpenAiForTripImage(imageDataUrl) {
   const payload = await parseGithubResponseBody(response);
   if (!response.ok) {
     const detail = extractOpenAiErrorMessage(payload, '');
-    const error = new Error(`OpenAI 调用失败（HTTP ${response.status}）${detail ? `：${detail}` : ''}`);
+    const error = new Error('OpenAI request failed (HTTP ' + response.status + ')' + (detail ? ': ' + detail : ''));
     error.code = 'OPENAI_REQUEST_FAILED';
     error.openAiStatus = response.status;
     error.openAiDetail = detail;
@@ -1153,7 +1319,7 @@ async function callOpenAiForTripImage(imageDataUrl) {
 
   const outputText = extractOpenAiOutputText(payload);
   if (!outputText) {
-    throw new Error('OpenAI 返回为空，无法解析识别结果。');
+    throw new Error('OpenAI returned empty output, cannot parse trip metrics.');
   }
 
   return outputText;
@@ -2706,7 +2872,38 @@ async function handleTripAiExtractRequest(req, res, origin) {
       return;
     }
 
-    const rawText = await callOpenAiForTripImage(validated.imageDataUrl);
+    let rawText = '';
+    let aiProvider = 'openai';
+    let fallbackFromOpenAiStatus;
+
+    try {
+      rawText = await callOpenAiForTripImage(validated.imageDataUrl);
+    } catch (openAiError) {
+      if (!shouldUseCodexCliFallback(openAiError)) {
+        throw openAiError;
+      }
+
+      try {
+        rawText = await callCodexCliForTripImage(validated.imageDataUrl);
+        aiProvider = 'codex-cli';
+        const openAiStatusRaw = Number(openAiError?.openAiStatus);
+        if (Number.isFinite(openAiStatusRaw) && openAiStatusRaw >= 100 && openAiStatusRaw <= 599) {
+          fallbackFromOpenAiStatus = Math.floor(openAiStatusRaw);
+        }
+      } catch (fallbackError) {
+        const errorObject = fallbackError && typeof fallbackError === 'object' ? fallbackError : new Error('Codex CLI fallback failed.');
+        const openAiStatusRaw = Number(openAiError?.openAiStatus);
+        if (Number.isFinite(openAiStatusRaw) && openAiStatusRaw >= 100 && openAiStatusRaw <= 599) {
+          errorObject.openAiStatus = Math.floor(openAiStatusRaw);
+        }
+        const openAiDetail = normalizeNonEmptyString(openAiError?.openAiDetail || openAiError?.message, 1000);
+        if (openAiDetail) {
+          errorObject.openAiDetail = `OpenAI failed before Codex fallback: ${openAiDetail}`;
+        }
+        throw errorObject;
+      }
+    }
+
     let savedImagePath = '';
     let savedImageUrl;
 
@@ -2732,6 +2929,8 @@ async function handleTripAiExtractRequest(req, res, origin) {
         savedImagePath,
         savedImageUrl,
         rawText,
+        aiProvider,
+        fallbackFromOpenAiStatus,
       },
       origin,
     );
@@ -2943,6 +3142,13 @@ async function startServer() {
       console.log(`[${SERVICE_NAME}] pat sealing: ${PAT_WRAP_KEY ? `enabled (${PAT_WRAP_KEY_VERSION})` : 'disabled'}`);
       console.log(`[${SERVICE_NAME}] push vapid: ${pushConfigured ? 'enabled' : 'disabled'}`);
       console.log(`[${SERVICE_NAME}] openai trip ai: ${OPENAI_API_KEY ? `enabled (${OPENAI_TRIP_IMAGE_MODEL})` : 'disabled'}`);
+      console.log(
+        `[${SERVICE_NAME}] codex cli fallback: ${
+          ENABLE_CODEX_CLI_FALLBACK
+            ? `enabled (${TRIP_AI_CODEX_CLI_BIN}, model=${TRIP_AI_CODEX_CLI_MODEL}, timeout=${TRIP_AI_CODEX_CLI_TIMEOUT_MS}ms)`
+            : 'disabled'
+        }`,
+      );
       console.log(`[${SERVICE_NAME}] trip image upload dir: ${TRIP_IMAGE_UPLOAD_DIR}`);
       console.log(`[${SERVICE_NAME}] internal tick token: ${INTERNAL_TICK_TOKEN ? 'configured' : 'missing'}`);
       console.log(
