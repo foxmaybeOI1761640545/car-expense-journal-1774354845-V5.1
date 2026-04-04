@@ -531,13 +531,17 @@ p {
 
 .home-shortcut-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .home-shortcut-link {
   justify-content: flex-start;
   min-width: 0;
+  width: 100%;
 }
 
 .totals-card {
@@ -1838,8 +1842,7 @@ select:focus {
     align-items: stretch;
   }
 
-  .home-shortcut-add,
-  .home-shortcut-item {
+  .home-shortcut-add {
     grid-template-columns: 1fr;
   }
 

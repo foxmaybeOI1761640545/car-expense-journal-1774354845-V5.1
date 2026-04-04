@@ -103,6 +103,7 @@
           <span class="muted">{{ selectedQuickPageIds.length }}/{{ QUICK_PAGE_OPTIONS.length }}</span>
         </div>
         <p class="muted">选择页面后生成快捷键，点击即可直接跳转。</p>
+        <p class="hint">手势：右滑替换为其他页面，左滑移除快捷入口。</p>
 
         <div class="home-shortcut-add">
           <label>
@@ -118,11 +119,17 @@
         </div>
 
         <ul v-if="selectedQuickPageOptions.length" class="home-shortcut-list">
-          <li v-for="option in selectedQuickPageOptions" :key="option.id" class="home-shortcut-item">
+          <li
+            v-for="option in selectedQuickPageOptions"
+            :key="option.id"
+            class="home-shortcut-item"
+            @touchstart.passive="handleQuickShortcutTouchStart(option.id, $event)"
+            @touchend="handleQuickShortcutTouchEnd(option.id, $event)"
+            @touchcancel="resetQuickShortcutTouchState"
+          >
             <button class="btn btn--secondary home-shortcut-link" type="button" @click="openQuickPage(option.id)">
               {{ option.label }}
             </button>
-            <button class="btn btn--ghost" type="button" @click="removeQuickPageShortcut(option.id)">移除</button>
           </li>
         </ul>
         <p v-else class="muted">暂无快捷入口，请先新增。</p>
@@ -338,6 +345,13 @@ const isWelcomeActionsCollapsed = ref(true);
 const isOverviewCollapsed = ref(true);
 const selectedQuickPageIds = ref<QuickPageId[]>(loadQuickPageIds());
 const quickPageCandidateId = ref<QuickPageId | ''>('');
+const quickShortcutTouchStartX = ref(0);
+const quickShortcutTouchStartY = ref(0);
+const quickShortcutTouchPageId = ref<QuickPageId | null>(null);
+const quickShortcutSuppressClickUntil = ref(0);
+const QUICK_SHORTCUT_SWIPE_DISTANCE_PX = 48;
+const QUICK_SHORTCUT_SWIPE_HORIZONTAL_RATIO = 1.2;
+const QUICK_SHORTCUT_SUPPRESS_CLICK_MS = 400;
 
 function isSealedGithubToken(value: string): boolean {
   return /^pat\.sealed\.[^.]+\./.test(value.trim());
@@ -538,6 +552,26 @@ function addQuickPageShortcut(): void {
   store.showToast('快捷入口已新增。', 'success');
 }
 
+function replaceQuickPageShortcut(pageId: QuickPageId): void {
+  const currentIndex = selectedQuickPageIds.value.indexOf(pageId);
+  if (currentIndex === -1) {
+    return;
+  }
+
+  const selectedSet = new Set(selectedQuickPageIds.value);
+  const nextOption = QUICK_PAGE_OPTIONS.find((option) => option.id !== pageId && !selectedSet.has(option.id));
+
+  if (!nextOption) {
+    store.showToast('暂无可替换的页面，请先移除其他快捷入口。', 'info');
+    return;
+  }
+
+  const nextSelectedIds = [...selectedQuickPageIds.value];
+  nextSelectedIds[currentIndex] = nextOption.id;
+  selectedQuickPageIds.value = nextSelectedIds;
+  persistQuickPageIds();
+  store.showToast(`快捷入口已替换为：${nextOption.label}`, 'success');
+}
 function removeQuickPageShortcut(pageId: QuickPageId): void {
   const next = selectedQuickPageIds.value.filter((item) => item !== pageId);
   if (next.length === selectedQuickPageIds.value.length) {
@@ -549,7 +583,63 @@ function removeQuickPageShortcut(pageId: QuickPageId): void {
   store.showToast('快捷入口已移除。', 'info');
 }
 
+function handleQuickShortcutTouchStart(pageId: QuickPageId, event: TouchEvent): void {
+  const touch = event.changedTouches[0];
+  if (!touch) {
+    return;
+  }
+
+  quickShortcutTouchPageId.value = pageId;
+  quickShortcutTouchStartX.value = touch.clientX;
+  quickShortcutTouchStartY.value = touch.clientY;
+}
+
+function handleQuickShortcutTouchEnd(pageId: QuickPageId, event: TouchEvent): void {
+  if (quickShortcutTouchPageId.value !== pageId) {
+    resetQuickShortcutTouchState();
+    return;
+  }
+
+  const touch = event.changedTouches[0];
+  if (!touch) {
+    resetQuickShortcutTouchState();
+    return;
+  }
+
+  const deltaX = touch.clientX - quickShortcutTouchStartX.value;
+  const deltaY = touch.clientY - quickShortcutTouchStartY.value;
+  const horizontalDistance = Math.abs(deltaX);
+  const verticalDistance = Math.abs(deltaY);
+  const isHorizontalSwipe =
+    horizontalDistance >= QUICK_SHORTCUT_SWIPE_DISTANCE_PX &&
+    horizontalDistance >= verticalDistance * QUICK_SHORTCUT_SWIPE_HORIZONTAL_RATIO;
+
+  if (!isHorizontalSwipe) {
+    resetQuickShortcutTouchState();
+    return;
+  }
+
+  quickShortcutSuppressClickUntil.value = Date.now() + QUICK_SHORTCUT_SUPPRESS_CLICK_MS;
+
+  if (deltaX > 0) {
+    replaceQuickPageShortcut(pageId);
+  } else {
+    removeQuickPageShortcut(pageId);
+  }
+
+  resetQuickShortcutTouchState();
+}
+
+function resetQuickShortcutTouchState(): void {
+  quickShortcutTouchPageId.value = null;
+  quickShortcutTouchStartX.value = 0;
+  quickShortcutTouchStartY.value = 0;
+}
 function openQuickPage(pageId: QuickPageId): void {
+  if (Date.now() < quickShortcutSuppressClickUntil.value) {
+    return;
+  }
+
   const option = QUICK_PAGE_OPTION_MAP.get(pageId);
   if (!option) {
     return;
