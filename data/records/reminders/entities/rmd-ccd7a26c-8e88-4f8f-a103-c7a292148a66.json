@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "rmd-ccd7a26c-8e88-4f8f-a103-c7a292148a66",
+  "deviceId": "device-801257d0-cf16-4f22-9a0d-9d00c27b4ae2",
+  "kind": "custom-time",
+  "title": "起床",
+  "durationSeconds": 21973,
+  "triggerAtUnix": 1775345700,
+  "scheduleMode": "date-time",
+  "repeatWeekdays": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "status": "pending",
+  "soundEnabled": true,
+  "notificationEnabled": true,
+  "requiresAcknowledgement": false,
+  "createdAtUnix": 1775323727,
+  "updatedAtUnix": 1775323728,
+  "retryCount": 0,
+  "source": "frontend"
+}
