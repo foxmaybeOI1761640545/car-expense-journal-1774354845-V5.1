@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "rmd-e560c2ef-28c0-43b3-b6c1-6c361464b28c",
+  "deviceId": "device-801257d0-cf16-4f22-9a0d-9d00c27b4ae2",
+  "kind": "custom",
+  "title": "王者农场",
+  "durationSeconds": 41280,
+  "triggerAtUnix": 1775462061,
+  "scheduleMode": "countdown",
+  "status": "pending",
+  "soundEnabled": true,
+  "notificationEnabled": true,
+  "requiresAcknowledgement": false,
+  "createdAtUnix": 1775420781,
+  "updatedAtUnix": 1775420783,
+  "retryCount": 0,
+  "source": "frontend"
+}
