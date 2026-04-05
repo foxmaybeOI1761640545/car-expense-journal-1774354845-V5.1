@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "rmd-66938099-ec1b-4ff9-98c4-c9c90886a71e",
+  "deviceId": "device-801257d0-cf16-4f22-9a0d-9d00c27b4ae2",
+  "kind": "custom",
+  "title": "王者农场浇水",
+  "durationSeconds": 18300,
+  "triggerAtUnix": 1775439109,
+  "scheduleMode": "countdown",
+  "status": "pending",
+  "soundEnabled": true,
+  "notificationEnabled": true,
+  "requiresAcknowledgement": false,
+  "createdAtUnix": 1775420809,
+  "updatedAtUnix": 1775420809,
+  "retryCount": 0,
+  "source": "frontend"
+}
