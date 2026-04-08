@@ -554,18 +554,80 @@ p {
 }
 
 .home-shortcut-item {
+  --home-shortcut-offset-x: 0px;
+  --home-shortcut-swipe-progress: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
   touch-action: pan-y;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.home-shortcut-item__actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    rgba(122, 155, 118, 0.16) 0%,
+    rgba(122, 155, 118, 0.1) 46%,
+    rgba(184, 106, 91, 0.1) 54%,
+    rgba(184, 106, 91, 0.16) 100%
+  );
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, filter 0.2s ease;
+}
+
+.home-shortcut-item--swiping .home-shortcut-item__actions {
+  opacity: calc(0.28 + var(--home-shortcut-swipe-progress) * 0.72);
+}
+
+.home-shortcut-action {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-subtle);
+  transition: color 0.18s ease, transform 0.18s ease, opacity 0.18s ease;
+  opacity: 0.7;
+}
+
+.home-shortcut-item--replace-cue .home-shortcut-action--replace,
+.home-shortcut-item--remove-cue .home-shortcut-action--remove {
+  color: var(--color-text-main);
+  opacity: 1;
+  transform: scale(1.03);
+}
+
+.home-shortcut-item--replace-cue .home-shortcut-item__actions {
+  filter: saturate(1.12);
+}
+
+.home-shortcut-item--remove-cue .home-shortcut-item__actions {
+  filter: saturate(1.18);
 }
 
 .home-shortcut-link {
   justify-content: flex-start;
   min-width: 0;
   width: 100%;
+  position: relative;
+  z-index: 1;
+  transform: translateX(var(--home-shortcut-offset-x));
+  transition: transform 0.2s ease;
+  will-change: transform;
+}
+
+.home-shortcut-item--swiping .home-shortcut-link {
+  transition: none;
 }
 
 .totals-card {
@@ -1642,6 +1704,16 @@ select:focus {
 :root[data-theme='night'] .reminder-item--fired {
   border-color: #7d5c58;
   background: #473534;
+}
+
+:root[data-theme='night'] .home-shortcut-item__actions {
+  background: linear-gradient(
+    90deg,
+    rgba(121, 145, 115, 0.28) 0%,
+    rgba(121, 145, 115, 0.18) 46%,
+    rgba(185, 122, 114, 0.18) 54%,
+    rgba(185, 122, 114, 0.28) 100%
+  );
 }
 
 :root[data-theme='night'] .pomodoro-timer-card--work {

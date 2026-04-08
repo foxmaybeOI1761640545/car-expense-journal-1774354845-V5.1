@@ -103,7 +103,7 @@
           <span class="muted">{{ selectedQuickPageIds.length }}/{{ QUICK_PAGE_OPTIONS.length }}</span>
         </div>
         <p class="muted">选择页面后生成快捷键，点击即可直接跳转。</p>
-        <p class="hint">手势：右滑替换为其他页面，左滑移除快捷入口。</p>
+        <p class="hint">手势：右滑替换、左滑移除；松手后会弹确认框。</p>
 
         <div class="home-shortcut-add">
           <label>
@@ -123,10 +123,17 @@
             v-for="option in selectedQuickPageOptions"
             :key="option.id"
             class="home-shortcut-item"
+            :class="getQuickShortcutItemClass(option.id)"
+            :style="getQuickShortcutItemStyle(option.id)"
             @touchstart.passive="handleQuickShortcutTouchStart(option.id, $event)"
+            @touchmove="handleQuickShortcutTouchMove(option.id, $event)"
             @touchend="handleQuickShortcutTouchEnd(option.id, $event)"
             @touchcancel="resetQuickShortcutTouchState"
           >
+            <div class="home-shortcut-item__actions" aria-hidden="true">
+              <span class="home-shortcut-action home-shortcut-action--replace">松手确认替换</span>
+              <span class="home-shortcut-action home-shortcut-action--remove">松手确认移除</span>
+            </div>
             <button class="btn btn--secondary home-shortcut-link" type="button" @click="openQuickPage(option.id)">
               {{ option.label }}
             </button>
@@ -348,8 +355,10 @@ const quickPageCandidateId = ref<QuickPageId | ''>('');
 const quickShortcutTouchStartX = ref(0);
 const quickShortcutTouchStartY = ref(0);
 const quickShortcutTouchPageId = ref<QuickPageId | null>(null);
+const quickShortcutTouchOffsetX = ref(0);
 const quickShortcutSuppressClickUntil = ref(0);
-const QUICK_SHORTCUT_SWIPE_DISTANCE_PX = 48;
+const QUICK_SHORTCUT_SWIPE_DISTANCE_PX = 52;
+const QUICK_SHORTCUT_MAX_PREVIEW_OFFSET_PX = 120;
 const QUICK_SHORTCUT_SWIPE_HORIZONTAL_RATIO = 1.2;
 const QUICK_SHORTCUT_SUPPRESS_CLICK_MS = 400;
 
@@ -572,6 +581,31 @@ function replaceQuickPageShortcut(pageId: QuickPageId): void {
   persistQuickPageIds();
   store.showToast(`快捷入口已替换为：${nextOption.label}`, 'success');
 }
+
+function resolveReplacementQuickPageOption(pageId: QuickPageId): QuickPageOption | null {
+  const selectedSet = new Set(selectedQuickPageIds.value);
+  return QUICK_PAGE_OPTIONS.find((option) => option.id !== pageId && !selectedSet.has(option.id)) ?? null;
+}
+
+function confirmQuickShortcutSwipeAction(pageId: QuickPageId, action: 'replace' | 'remove'): boolean {
+  const currentOption = QUICK_PAGE_OPTION_MAP.get(pageId);
+  if (!currentOption) {
+    return false;
+  }
+
+  if (action === 'replace') {
+    const nextOption = resolveReplacementQuickPageOption(pageId);
+    if (!nextOption) {
+      store.showToast('暂无可替换的页面，请先移除其他快捷入口。', 'info');
+      return false;
+    }
+
+    return window.confirm(`确认将快捷入口“${currentOption.label}”替换为“${nextOption.label}”吗？`);
+  }
+
+  return window.confirm(`确认移除快捷入口“${currentOption.label}”吗？`);
+}
+
 function removeQuickPageShortcut(pageId: QuickPageId): void {
   const next = selectedQuickPageIds.value.filter((item) => item !== pageId);
   if (next.length === selectedQuickPageIds.value.length) {
@@ -592,6 +626,37 @@ function handleQuickShortcutTouchStart(pageId: QuickPageId, event: TouchEvent): 
   quickShortcutTouchPageId.value = pageId;
   quickShortcutTouchStartX.value = touch.clientX;
   quickShortcutTouchStartY.value = touch.clientY;
+  quickShortcutTouchOffsetX.value = 0;
+}
+
+function handleQuickShortcutTouchMove(pageId: QuickPageId, event: TouchEvent): void {
+  if (quickShortcutTouchPageId.value !== pageId) {
+    return;
+  }
+
+  const touch = event.changedTouches[0];
+  if (!touch) {
+    return;
+  }
+
+  const deltaX = touch.clientX - quickShortcutTouchStartX.value;
+  const deltaY = touch.clientY - quickShortcutTouchStartY.value;
+  const horizontalDistance = Math.abs(deltaX);
+  const verticalDistance = Math.abs(deltaY);
+
+  if (horizontalDistance < 8) {
+    quickShortcutTouchOffsetX.value = 0;
+    return;
+  }
+
+  if (horizontalDistance < verticalDistance * QUICK_SHORTCUT_SWIPE_HORIZONTAL_RATIO) {
+    quickShortcutTouchOffsetX.value = 0;
+    return;
+  }
+
+  event.preventDefault();
+  const clamped = Math.max(-QUICK_SHORTCUT_MAX_PREVIEW_OFFSET_PX, Math.min(QUICK_SHORTCUT_MAX_PREVIEW_OFFSET_PX, deltaX));
+  quickShortcutTouchOffsetX.value = clamped;
 }
 
 function handleQuickShortcutTouchEnd(pageId: QuickPageId, event: TouchEvent): void {
@@ -622,9 +687,13 @@ function handleQuickShortcutTouchEnd(pageId: QuickPageId, event: TouchEvent): vo
   quickShortcutSuppressClickUntil.value = Date.now() + QUICK_SHORTCUT_SUPPRESS_CLICK_MS;
 
   if (deltaX > 0) {
-    replaceQuickPageShortcut(pageId);
+    if (confirmQuickShortcutSwipeAction(pageId, 'replace')) {
+      replaceQuickPageShortcut(pageId);
+    }
   } else {
-    removeQuickPageShortcut(pageId);
+    if (confirmQuickShortcutSwipeAction(pageId, 'remove')) {
+      removeQuickPageShortcut(pageId);
+    }
   }
 
   resetQuickShortcutTouchState();
@@ -634,6 +703,33 @@ function resetQuickShortcutTouchState(): void {
   quickShortcutTouchPageId.value = null;
   quickShortcutTouchStartX.value = 0;
   quickShortcutTouchStartY.value = 0;
+  quickShortcutTouchOffsetX.value = 0;
+}
+
+function getQuickShortcutItemStyle(pageId: QuickPageId): Record<string, string> {
+  if (quickShortcutTouchPageId.value !== pageId) {
+    return {
+      '--home-shortcut-offset-x': '0px',
+      '--home-shortcut-swipe-progress': '0',
+    };
+  }
+
+  const offset = quickShortcutTouchOffsetX.value;
+  const progress = Math.min(1, Math.abs(offset) / QUICK_SHORTCUT_MAX_PREVIEW_OFFSET_PX);
+  return {
+    '--home-shortcut-offset-x': `${offset}px`,
+    '--home-shortcut-swipe-progress': progress.toFixed(3),
+  };
+}
+
+function getQuickShortcutItemClass(pageId: QuickPageId): Record<string, boolean> {
+  const isActive = quickShortcutTouchPageId.value === pageId;
+  const offset = isActive ? quickShortcutTouchOffsetX.value : 0;
+  return {
+    'home-shortcut-item--swiping': isActive && Math.abs(offset) > 0,
+    'home-shortcut-item--replace-cue': isActive && offset > 0,
+    'home-shortcut-item--remove-cue': isActive && offset < 0,
+  };
 }
 function openQuickPage(pageId: QuickPageId): void {
   if (Date.now() < quickShortcutSuppressClickUntil.value) {
