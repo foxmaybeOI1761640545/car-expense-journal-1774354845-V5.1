@@ -15,6 +15,7 @@
   reminderApiBaseUrl: string;
   reminderApiFallbackBaseUrl: string;
   reminderDefaultEmail: string;
+  blackoutToggleShortcut: string;
   preferConfigOverLocalStorage: boolean;
 }
 
@@ -32,5 +33,6 @@ export const DEFAULT_APP_CONFIG: AppConfig = {
   reminderApiBaseUrl: '',
   reminderApiFallbackBaseUrl: '',
   reminderDefaultEmail: '',
+  blackoutToggleShortcut: 'Ctrl+Q',
   preferConfigOverLocalStorage: false,
 };

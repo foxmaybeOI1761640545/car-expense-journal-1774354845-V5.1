@@ -69,6 +69,10 @@
           <input v-model="settings.reminderDefaultEmail" type="email" placeholder="you@example.com" />
         </label>
         <label>
+          黑屏快捷键（可自定义）
+          <input v-model="settings.blackoutToggleShortcut" type="text" placeholder="Ctrl+Q" @blur="normalizeBlackoutShortcutInput" />
+        </label>
+        <label>
           GitHub Token（仅本浏览器保存）
           <input
             v-model="githubTokenInput"
@@ -91,6 +95,7 @@
         </label>
         <p class="hint full-width">{{ configPriorityEffectText }}</p>
         <p class="hint full-width">当前设备 ID：{{ currentDeviceIdText }}</p>
+        <p class="hint full-width">黑屏快捷键：{{ normalizedBlackoutShortcutText }}（示例：Ctrl+Q / Ctrl+Shift+B）</p>
         <p class="hint full-width">{{ githubTokenStatusText }}</p>
         <button class="btn btn--primary full-width" type="submit">保存设置</button>
         <button class="btn btn--danger full-width" type="button" :disabled="isClearingLocalCache" @click="clearLocalCache">
@@ -107,6 +112,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import PageHeader from '../components/PageHeader.vue';
 import { useAppStore } from '../stores/appStore';
 import type { AppConfig } from '../types/config';
+import { DEFAULT_BLACKOUT_TOGGLE_SHORTCUT, normalizeShortcutText } from '../utils/shortcut';
 import { parsePositiveNumber, roundTo } from '../utils/number';
 
 const store = useAppStore();
@@ -170,11 +176,19 @@ const currentDeviceIdText = computed(() => {
   }
   return value.length <= 18 ? value : `${value.slice(0, 10)}...${value.slice(-6)}`;
 });
+const normalizedBlackoutShortcutText = computed(() =>
+  normalizeShortcutText(settings.blackoutToggleShortcut, DEFAULT_BLACKOUT_TOGGLE_SHORTCUT),
+);
+
+function normalizeBlackoutShortcutInput(): void {
+  settings.blackoutToggleShortcut = normalizeShortcutText(settings.blackoutToggleShortcut, DEFAULT_BLACKOUT_TOGGLE_SHORTCUT);
+}
 
 async function saveSettings(): Promise<void> {
   const defaultFuelPrice = parsePositiveNumber(settings.defaultFuelPrice);
   const defaultAverageFuelConsumptionPer100Km = parsePositiveNumber(settings.defaultAverageFuelConsumptionPer100Km);
   const defaultDistanceKm = parsePositiveNumber(settings.defaultDistanceKm);
+  normalizeBlackoutShortcutInput();
 
   store.updateConfig({
     defaultProvince: settings.defaultProvince,
@@ -191,6 +205,7 @@ async function saveSettings(): Promise<void> {
     githubRecordsDir: settings.githubRecordsDir.trim() || 'data/records',
     reminderApiBaseUrl: settings.reminderApiBaseUrl.trim(),
     reminderDefaultEmail: settings.reminderDefaultEmail.trim(),
+    blackoutToggleShortcut: settings.blackoutToggleShortcut,
     preferConfigOverLocalStorage: settings.preferConfigOverLocalStorage,
   });
   store.updateDeviceName(deviceNameInput.value);

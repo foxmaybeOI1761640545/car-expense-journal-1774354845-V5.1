@@ -12,5 +12,6 @@
   "reminderApiBaseUrl": "",
   "reminderApiFallbackBaseUrl": "https://car-expense-journal-1774354845-v5-1-pk7d.onrender.com",
   "reminderDefaultEmail": "",
+  "blackoutToggleShortcut": "Ctrl+Q",
   "preferConfigOverLocalStorage": false
 }

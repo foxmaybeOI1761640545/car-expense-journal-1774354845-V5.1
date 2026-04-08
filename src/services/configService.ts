@@ -1,6 +1,7 @@
 ﻿import type { AppConfig } from '../types/config';
 import { DEFAULT_APP_CONFIG } from '../types/config';
 import { parsePositiveNumber, roundTo } from '../utils/number';
+import { DEFAULT_BLACKOUT_TOGGLE_SHORTCUT, normalizeShortcutText } from '../utils/shortcut';
 
 function sanitizePartialConfig(raw: Partial<AppConfig>): Partial<AppConfig> {
   const next: Partial<AppConfig> = {};
@@ -55,6 +56,9 @@ function sanitizePartialConfig(raw: Partial<AppConfig>): Partial<AppConfig> {
   }
   if (typeof raw.reminderDefaultEmail === 'string') {
     next.reminderDefaultEmail = raw.reminderDefaultEmail.trim();
+  }
+  if (typeof raw.blackoutToggleShortcut === 'string') {
+    next.blackoutToggleShortcut = normalizeShortcutText(raw.blackoutToggleShortcut, DEFAULT_BLACKOUT_TOGGLE_SHORTCUT);
   }
   if (typeof raw.preferConfigOverLocalStorage === 'boolean') {
     next.preferConfigOverLocalStorage = raw.preferConfigOverLocalStorage;
