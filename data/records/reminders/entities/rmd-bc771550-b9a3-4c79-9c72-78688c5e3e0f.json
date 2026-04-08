@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "rmd-bc771550-b9a3-4c79-9c72-78688c5e3e0f",
+  "deviceId": "device-801257d0-cf16-4f22-9a0d-9d00c27b4ae2",
+  "kind": "custom-time",
+  "title": "下高铁",
+  "durationSeconds": 8929,
+  "triggerAtUnix": 1775622900,
+  "scheduleMode": "date-time",
+  "status": "pending",
+  "soundEnabled": true,
+  "notificationEnabled": true,
+  "requiresAcknowledgement": false,
+  "createdAtUnix": 1775613971,
+  "updatedAtUnix": 1775613973,
+  "retryCount": 0,
+  "source": "frontend"
+}
