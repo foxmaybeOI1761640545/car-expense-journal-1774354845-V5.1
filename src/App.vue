@@ -1,6 +1,6 @@
 ﻿<template>
-  <div class="app-shell">
-    <header class="global-identity-bar">
+  <div class="app-shell" :class="{ 'app-shell--blackout-route': isBlackoutRoute }">
+    <header v-if="!isBlackoutRoute" class="global-identity-bar">
       <RouterLink :class="['global-identity-link', { 'global-identity-link--named': hasLocalDisplayName }]" to="/profile" aria-label="打开用户管理">
         <span :class="['global-identity-avatar', avatarShapeClass]">
           <img v-if="userAvatarDataUrl" :src="userAvatarDataUrl" alt="用户头像" />
@@ -29,10 +29,10 @@
         class="blackout-toggle"
         type="button"
         :title="`黑屏遮罩（${effectiveBlackoutShortcutLabel}）`"
-        :aria-label="isBlackoutActive ? '退出黑屏遮罩' : '进入黑屏遮罩'"
+        aria-label="进入黑屏遮罩"
         @click="toggleBlackoutByButton"
       >
-        {{ isBlackoutActive ? '退出黑屏' : '黑屏' }}
+        黑屏
       </button>
       <RouterLink class="global-guide-link" to="/guide" aria-label="打开应用说明">
         <span class="global-guide-link__icon" aria-hidden="true">i</span>
@@ -42,20 +42,9 @@
       </RouterLink>
     </header>
     <RouterView />
-    <section
-      v-if="isBlackoutActive"
-      class="blackout-overlay"
-      role="button"
-      tabindex="0"
-      aria-label="黑屏遮罩，点击任意位置退出"
-      @click.prevent.stop="deactivateBlackout('manual')"
-      @contextmenu.prevent
-      @wheel.prevent
-      @touchmove.prevent
-    ></section>
     <transition name="global-reminder-popup-fade">
       <section
-        v-if="showGlobalReminderPopup && currentGlobalReminderTask"
+        v-if="!isBlackoutRoute && showGlobalReminderPopup && currentGlobalReminderTask"
         class="global-reminder-popup"
         role="alertdialog"
         aria-live="assertive"
@@ -74,6 +63,7 @@
       </section>
     </transition>
     <AppToast
+      v-if="!isBlackoutRoute"
       :visible="toast.visible"
       :message="toast.message"
       :type="toast.type"
@@ -84,7 +74,7 @@
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import AppToast from './components/AppToast.vue';
 import {
   acknowledgeAllGlobalReminderTasks,
@@ -97,6 +87,7 @@ import { loadReminderTasks } from './services/reminderService';
 import { applyAppTheme, loadAppTheme, setAppTheme, type AppTheme } from './services/themeService';
 import { useAppStore } from './stores/appStore';
 import type { ReminderTask } from './types/reminder';
+import { BLACKOUT_ROUTE_PATH, resolveBlackoutReturnPath } from './utils/blackoutRoute';
 import {
   DEFAULT_BLACKOUT_TOGGLE_SHORTCUT,
   matchesShortcutEvent,
@@ -107,6 +98,7 @@ import { toLocalDateTime, unixSecondsToIsoString } from './utils/date';
 
 const store = useAppStore();
 const route = useRoute();
+const router = useRouter();
 const toast = computed(() => store.state.toast);
 const currentTheme = ref<AppTheme>(loadAppTheme());
 const isNightTheme = computed(() => currentTheme.value === 'night');
@@ -120,14 +112,18 @@ const userAvatarDataUrl = computed(() => store.state.userProfile.avatarDataUrl.t
 const avatarShapeClass = computed(() =>
   store.state.userProfile.avatarStyle === 'square' ? 'global-identity-avatar--square' : 'global-identity-avatar--round',
 );
+const isBlackoutRoute = computed(() => route.path === BLACKOUT_ROUTE_PATH || route.name === 'blackout');
 const globalPendingReminderTasks = ref<ReminderTask[]>([]);
 const currentGlobalReminderTask = computed(() => globalPendingReminderTasks.value[0] ?? null);
-const showGlobalReminderPopup = computed(() => route.name !== 'reminder' && currentGlobalReminderTask.value !== null);
-const isBlackoutActive = ref(false);
+const showGlobalReminderPopup = computed(
+  () => route.name !== 'reminder' && !isBlackoutRoute.value && currentGlobalReminderTask.value !== null,
+);
 const effectiveBlackoutShortcutLabel = computed(() =>
   normalizeShortcutText(store.state.config.blackoutToggleShortcut, DEFAULT_BLACKOUT_TOGGLE_SHORTCUT),
 );
 const effectiveBlackoutShortcut = computed(() => parseShortcut(effectiveBlackoutShortcutLabel.value));
+const lastNonBlackoutFullPath = ref('/');
+const blackoutReturnPath = computed(() => resolveBlackoutReturnPath(route.query.from, lastNonBlackoutFullPath.value));
 const currentGlobalReminderTriggerText = computed(() => {
   if (!currentGlobalReminderTask.value) {
     return '';
@@ -136,7 +132,6 @@ const currentGlobalReminderTriggerText = computed(() => {
 });
 let unsubscribeGlobalReminderPending: (() => void) | null = null;
 let blackoutReminderProbeTicker: number | null = null;
-let lastFocusedElement: HTMLElement | null = null;
 
 applyAppTheme(currentTheme.value);
 
@@ -153,13 +148,36 @@ watch(
 );
 
 watch(
+  () => route.fullPath,
+  (fullPath) => {
+    if (!isBlackoutRoute.value) {
+      lastNonBlackoutFullPath.value = fullPath || '/';
+    }
+  },
+  { immediate: true },
+);
+
+watch(
   globalPendingReminderTasks,
   (tasks) => {
-    if (isBlackoutActive.value && tasks.length > 0) {
-      deactivateBlackout('auto');
+    if (isBlackoutRoute.value && tasks.length > 0) {
+      leaveBlackoutRoute('auto');
     }
   },
   { immediate: false },
+);
+
+watch(
+  isBlackoutRoute,
+  (active) => {
+    if (active) {
+      startBlackoutReminderProbe();
+      return;
+    }
+
+    stopBlackoutReminderProbe();
+  },
+  { immediate: true },
 );
 
 onMounted(() => {
@@ -181,12 +199,12 @@ function startBlackoutReminderProbe(): void {
   }
 
   blackoutReminderProbeTicker = window.setInterval(() => {
-    if (!isBlackoutActive.value) {
+    if (!isBlackoutRoute.value) {
       return;
     }
 
     if (countAcknowledgementPendingReminders() > 0) {
-      deactivateBlackout('auto');
+      leaveBlackoutRoute('auto');
     }
   }, 500);
 }
@@ -200,49 +218,39 @@ function stopBlackoutReminderProbe(): void {
   blackoutReminderProbeTicker = null;
 }
 
-function activateBlackout(): void {
-  if (isBlackoutActive.value) {
+function enterBlackoutRoute(): void {
+  if (isBlackoutRoute.value) {
     return;
   }
 
-  if (typeof document !== 'undefined' && document.activeElement instanceof HTMLElement) {
-    lastFocusedElement = document.activeElement;
-  } else {
-    lastFocusedElement = null;
+  const currentPath = route.fullPath || '/';
+  if (!currentPath.startsWith(BLACKOUT_ROUTE_PATH)) {
+    lastNonBlackoutFullPath.value = currentPath;
   }
 
-  isBlackoutActive.value = true;
-  startBlackoutReminderProbe();
+  void router.push({
+    path: BLACKOUT_ROUTE_PATH,
+    query: {
+      from: currentPath,
+    },
+  });
 }
 
-function deactivateBlackout(reason: 'manual' | 'shortcut' | 'auto' = 'manual'): void {
-  if (!isBlackoutActive.value) {
+function leaveBlackoutRoute(reason: 'manual' | 'shortcut' | 'auto' = 'manual'): void {
+  if (!isBlackoutRoute.value) {
     return;
   }
 
-  isBlackoutActive.value = false;
-  stopBlackoutReminderProbe();
+  const targetPath = blackoutReturnPath.value || lastNonBlackoutFullPath.value || '/';
+  void router.replace(targetPath);
 
   if (reason === 'auto') {
     store.showToast('倒计时已到点，已自动退出黑屏。', 'info');
   }
-
-  if (lastFocusedElement) {
-    try {
-      lastFocusedElement.focus({ preventScroll: true });
-    } catch {
-      // Ignore focus restore failures.
-    }
-    lastFocusedElement = null;
-  }
 }
 
 function toggleBlackoutByButton(): void {
-  if (isBlackoutActive.value) {
-    deactivateBlackout('manual');
-    return;
-  }
-  activateBlackout();
+  enterBlackoutRoute();
 }
 
 function handleGlobalBlackoutKeydown(event: KeyboardEvent): void {
@@ -256,16 +264,16 @@ function handleGlobalBlackoutKeydown(event: KeyboardEvent): void {
       event.stopImmediatePropagation();
     }
     if (!event.repeat) {
-      if (isBlackoutActive.value) {
-        deactivateBlackout('shortcut');
+      if (isBlackoutRoute.value) {
+        leaveBlackoutRoute('shortcut');
       } else {
-        activateBlackout();
+        enterBlackoutRoute();
       }
     }
     return;
   }
 
-  if (!isBlackoutActive.value) {
+  if (!isBlackoutRoute.value) {
     return;
   }
 
@@ -301,7 +309,6 @@ function toggleTheme(): void {
 }
 
 onBeforeUnmount(() => {
-  deactivateBlackout('manual');
   stopBlackoutReminderProbe();
   window.removeEventListener('keydown', handleGlobalBlackoutKeydown, true);
   if (unsubscribeGlobalReminderPending) {

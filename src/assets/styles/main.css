@@ -91,6 +91,23 @@ select {
   padding: 16px;
 }
 
+.app-shell.app-shell--blackout-route {
+  min-height: 100vh;
+  padding: 0;
+  background: #000;
+}
+
+html.blackout-route-active,
+body.blackout-route-active {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+body.blackout-route-active {
+  background: #000;
+}
+
 .global-identity-bar {
   max-width: 1200px;
   margin: 0 auto 12px;
@@ -1557,13 +1574,17 @@ select:focus {
   z-index: 55;
 }
 
-.blackout-overlay {
+.blackout-page {
   position: fixed;
   inset: 0;
+  width: 100vw;
+  height: 100dvh;
   background: #000;
-  opacity: 1;
-  z-index: 9999;
   cursor: pointer;
+}
+
+.blackout-page:focus-visible {
+  outline: none;
 }
 
 .global-reminder-popup h3 {
