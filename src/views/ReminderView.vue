@@ -265,6 +265,12 @@
               <div class="reminder-item__title-row">
                 <strong>{{ task.title }}</strong>
                 <span class="tag tag--pending">待确认</span>
+                <span class="tag" :class="task.soundEnabled ? 'tag--success' : 'tag--neutral'">
+                  {{ task.soundEnabled ? '声音提醒开' : '声音提醒关' }}
+                </span>
+                <span class="tag" :class="task.notificationEnabled ? 'tag--success' : 'tag--neutral'">
+                  {{ task.notificationEnabled ? '系统通知开' : '系统通知关' }}
+                </span>
               </div>
               <p class="hint">到点时间：{{ toLocalDateTimeText(task.triggerAtUnix) }}</p>
               <p class="hint">触发时间：{{ toLocalDateTimeText(task.firedAtUnix ?? task.updatedAtUnix) }}</p>
@@ -287,6 +293,12 @@
               <div class="reminder-item__title-row">
                 <strong>{{ task.title }}</strong>
                 <span class="tag tag--pending">{{ formatReminderKind(task.kind) }}</span>
+                <span class="tag" :class="task.soundEnabled ? 'tag--success' : 'tag--neutral'">
+                  {{ task.soundEnabled ? '声音提醒开' : '声音提醒关' }}
+                </span>
+                <span class="tag" :class="task.notificationEnabled ? 'tag--success' : 'tag--neutral'">
+                  {{ task.notificationEnabled ? '系统通知开' : '系统通知关' }}
+                </span>
               </div>
               <p class="hint">剩余时间：{{ formatRemainingText(task) }}</p>
               <p class="hint">到点时间：{{ toLocalDateTimeText(task.triggerAtUnix) }}</p>
@@ -313,6 +325,12 @@
                 <strong>{{ task.title }}</strong>
                 <span class="tag" :class="task.status === 'fired' ? 'tag--success' : 'tag--neutral'">
                   {{ task.status === 'fired' ? '已确认' : '已取消' }}
+                </span>
+                <span class="tag" :class="task.soundEnabled ? 'tag--success' : 'tag--neutral'">
+                  {{ task.soundEnabled ? '声音提醒开' : '声音提醒关' }}
+                </span>
+                <span class="tag" :class="task.notificationEnabled ? 'tag--success' : 'tag--neutral'">
+                  {{ task.notificationEnabled ? '系统通知开' : '系统通知关' }}
                 </span>
               </div>
               <p class="hint">创建时间：{{ toLocalDateTimeText(task.createdAtUnix) }}</p>
