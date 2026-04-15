@@ -7,12 +7,13 @@
   "durationSeconds": 360,
   "triggerAtUnix": 1776240509,
   "scheduleMode": "countdown",
-  "status": "pending",
+  "status": "cancelled",
   "soundEnabled": true,
   "notificationEnabled": true,
   "requiresAcknowledgement": false,
   "createdAtUnix": 1776240149,
-  "updatedAtUnix": 1776240150,
+  "updatedAtUnix": 1776240158,
+  "cancelledAtUnix": 1776240158,
   "retryCount": 0,
-  "source": "frontend"
+  "source": "frontend-cancel"
 }
