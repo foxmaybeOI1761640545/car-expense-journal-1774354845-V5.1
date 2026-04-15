@@ -7,12 +7,13 @@
   "durationSeconds": 300,
   "triggerAtUnix": 1776240455,
   "scheduleMode": "countdown",
-  "status": "pending",
+  "status": "fired",
   "soundEnabled": true,
   "notificationEnabled": true,
-  "requiresAcknowledgement": false,
+  "requiresAcknowledgement": true,
   "createdAtUnix": 1776240155,
-  "updatedAtUnix": 1776240259,
+  "updatedAtUnix": 1776240456,
+  "firedAtUnix": 1776240455,
   "retryCount": 0,
   "source": "frontend"
 }
