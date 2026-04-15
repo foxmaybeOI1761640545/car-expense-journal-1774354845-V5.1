@@ -322,6 +322,12 @@ body.blackout-route-active {
   outline-offset: 2px;
 }
 
+@media (min-width: 768px) {
+  .blackout-toggle {
+    display: none;
+  }
+}
+
 .page {
   max-width: 1200px;
   margin: 0 auto;
