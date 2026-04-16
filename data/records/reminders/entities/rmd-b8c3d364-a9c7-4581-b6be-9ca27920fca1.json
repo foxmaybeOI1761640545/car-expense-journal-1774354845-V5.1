@@ -12,7 +12,7 @@
   "notificationEnabled": true,
   "requiresAcknowledgement": false,
   "createdAtUnix": 1776345380,
-  "updatedAtUnix": 1776345381,
+  "updatedAtUnix": 1776347637,
   "retryCount": 0,
   "source": "frontend"
 }
