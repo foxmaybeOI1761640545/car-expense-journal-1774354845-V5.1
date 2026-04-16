@@ -2,7 +2,7 @@
   <main
     class="blackout-page"
     tabindex="-1"
-    aria-label="黑屏页面，电脑端使用快捷键退出"
+    aria-label="黑屏页面，电脑端按快捷键或 Esc 退出"
   >
     <button v-if="isMobileViewport" class="btn btn--ghost blackout-page__exit-btn" type="button" @click="exitBlackout">
       退出黑屏

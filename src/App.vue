@@ -254,6 +254,20 @@ function toggleBlackoutByButton(): void {
 }
 
 function handleGlobalBlackoutKeydown(event: KeyboardEvent): void {
+  const isEscapeKey = event.key === 'Escape' || event.key === 'Esc';
+
+  if (isBlackoutRoute.value && isEscapeKey) {
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') {
+      event.stopImmediatePropagation();
+    }
+    if (!event.repeat) {
+      leaveBlackoutRoute('manual');
+    }
+    return;
+  }
+
   const shortcut = effectiveBlackoutShortcut.value;
   const isToggleShortcut = Boolean(shortcut && matchesShortcutEvent(event, shortcut));
 
@@ -275,12 +289,6 @@ function handleGlobalBlackoutKeydown(event: KeyboardEvent): void {
 
   if (!isBlackoutRoute.value) {
     return;
-  }
-
-  event.preventDefault();
-  event.stopPropagation();
-  if (typeof event.stopImmediatePropagation === 'function') {
-    event.stopImmediatePropagation();
   }
 }
 
